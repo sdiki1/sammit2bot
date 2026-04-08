@@ -11,7 +11,7 @@ def main() -> None:
         "summit_partner_bot.admin_app:create_app",
         factory=True,
         host="0.0.0.0",
-        port=settings.admin_panel_port,
+        port=8030,
     )
 
 
