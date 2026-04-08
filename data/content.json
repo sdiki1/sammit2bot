@@ -1,0 +1,60 @@
+{
+  "program": {
+    "title": "Актуальная программа саммита",
+    "url": "https://example.com/summit-program.pdf"
+  },
+  "useful_links": [
+    {
+      "title": "Сайт саммита",
+      "url": "https://example.com"
+    },
+    {
+      "title": "Регистрация / вход",
+      "url": "https://example.com/login"
+    },
+    {
+      "title": "Страница партнёра",
+      "url": "https://example.com/partners"
+    },
+    {
+      "title": "Онлайн-трансляция",
+      "url": "https://example.com/live"
+    },
+    {
+      "title": "Чат участников",
+      "url": "https://t.me/+replace_me"
+    },
+    {
+      "title": "Документы для скачивания",
+      "url": "https://example.com/docs"
+    }
+  ],
+  "partner_materials": [
+    {
+      "title": "Брендбук (PDF)",
+      "url": "https://example.com/materials/brandbook.pdf"
+    },
+    {
+      "title": "Макеты для соцсетей (ZIP)",
+      "url": "https://example.com/materials/social-assets.zip"
+    },
+    {
+      "title": "Презентация о саммите",
+      "url": "https://example.com/materials/presentation.pdf"
+    },
+    {
+      "title": "Инструкции для стенда",
+      "url": "https://example.com/materials/stand-guide.pdf"
+    },
+    {
+      "title": "Записи вебинаров",
+      "url": "https://example.com/materials/webinars"
+    }
+  ],
+  "manager_contact": {
+    "title": "Написать менеджеру напрямую",
+    "url": "https://t.me/manager_username"
+  },
+  "restricted_text": "Доступ к этому боту ограничен. Напишите организатору и получите персональный код доступа.",
+  "welcome_template": "Добро пожаловать, {first_name}!\nВы авторизованы как партнёр {summit_name}.\n\nИспользуйте меню ниже для быстрого доступа к информации:"
+}

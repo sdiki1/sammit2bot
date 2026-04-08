@@ -1,0 +1,384 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Summit Admin</title>
+  <style>
+    :root {
+      --bg: #f5f7fb;
+      --card: #ffffff;
+      --line: #dfe4ec;
+      --text: #1f2937;
+      --muted: #5b6474;
+      --accent: #1565d8;
+      --ok: #027a48;
+      --warn: #b54708;
+      --danger: #b42318;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: "Segoe UI", Arial, sans-serif;
+      background: linear-gradient(180deg, #f5f7fb 0%, #edf3ff 60%, #f5f7fb 100%);
+      color: var(--text);
+    }
+    header {
+      display: flex;
+      gap: 8px;
+      justify-content: space-between;
+      align-items: center;
+      padding: 16px 22px;
+      border-bottom: 1px solid var(--line);
+      background: #fff;
+      position: sticky;
+      top: 0;
+      z-index: 20;
+    }
+    h1 {
+      margin: 0;
+      font-size: 22px;
+    }
+    .top-actions {
+      display: flex;
+      gap: 10px;
+      align-items: center;
+      color: var(--muted);
+      font-size: 14px;
+    }
+    .btn-link {
+      display: inline-block;
+      text-decoration: none;
+      color: #fff;
+      background: var(--accent);
+      border-radius: 8px;
+      padding: 8px 12px;
+      font-weight: 600;
+    }
+    main {
+      max-width: 1320px;
+      margin: 16px auto 24px;
+      padding: 0 14px;
+      display: grid;
+      gap: 14px;
+    }
+    .flash {
+      background: #f0f9ff;
+      border: 1px solid #b9e6fe;
+      color: #1d4e89;
+      border-radius: 10px;
+      padding: 10px 12px;
+      font-weight: 600;
+    }
+    .stats {
+      display: grid;
+      gap: 10px;
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    }
+    .stat {
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: var(--card);
+      padding: 14px;
+    }
+    .stat .k {
+      color: var(--muted);
+      font-size: 13px;
+    }
+    .stat .v {
+      margin-top: 8px;
+      font-size: 26px;
+      font-weight: 700;
+    }
+    .grid-2 {
+      display: grid;
+      gap: 14px;
+      grid-template-columns: 1fr 1fr;
+    }
+    @media (max-width: 1024px) {
+      .grid-2 { grid-template-columns: 1fr; }
+    }
+    section {
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: var(--card);
+      padding: 14px;
+      overflow: auto;
+    }
+    h2 {
+      margin: 0 0 10px;
+      font-size: 17px;
+    }
+    h3 {
+      margin: 14px 0 8px;
+      font-size: 15px;
+    }
+    form {
+      margin: 0;
+      display: grid;
+      gap: 8px;
+    }
+    .row {
+      display: grid;
+      gap: 8px;
+      grid-template-columns: repeat(12, minmax(0, 1fr));
+      align-items: center;
+    }
+    .row > * {
+      min-width: 0;
+    }
+    .c2 { grid-column: span 2; }
+    .c1 { grid-column: span 1; }
+    .c3 { grid-column: span 3; }
+    .c4 { grid-column: span 4; }
+    .c5 { grid-column: span 5; }
+    .c6 { grid-column: span 6; }
+    .c7 { grid-column: span 7; }
+    .c8 { grid-column: span 8; }
+    .c9 { grid-column: span 9; }
+    .c10 { grid-column: span 10; }
+    .c12 { grid-column: span 12; }
+    @media (max-width: 840px) {
+      .row { grid-template-columns: 1fr; }
+      .c2, .c3, .c4, .c5, .c6, .c7, .c8, .c9, .c10, .c12 { grid-column: span 1; }
+    }
+    input, textarea, select {
+      width: 100%;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 8px 10px;
+      font-size: 14px;
+      color: var(--text);
+      background: #fff;
+    }
+    textarea {
+      min-height: 92px;
+      resize: vertical;
+      font-family: inherit;
+    }
+    .btn {
+      border: 0;
+      border-radius: 8px;
+      background: var(--accent);
+      color: #fff;
+      padding: 8px 12px;
+      font-weight: 700;
+      cursor: pointer;
+      white-space: nowrap;
+    }
+    .btn.ok { background: var(--ok); }
+    .btn.warn { background: var(--warn); }
+    .btn.danger { background: var(--danger); }
+    .muted { color: var(--muted); font-size: 12px; }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 13px;
+    }
+    th, td {
+      padding: 7px 8px;
+      border-bottom: 1px solid var(--line);
+      text-align: left;
+      vertical-align: top;
+    }
+    th { color: var(--muted); font-weight: 700; }
+    .status-ok { color: var(--ok); font-weight: 700; }
+    .status-off { color: var(--danger); font-weight: 700; }
+    .block {
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: 10px;
+      margin-bottom: 10px;
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Админ-панель Summit Partner</h1>
+    <div class="top-actions">
+      <span>Событие: {{ settings.summit_name }}</span>
+      <a class="btn-link" href="/logout">Выйти</a>
+    </div>
+  </header>
+
+  <main>
+    {% if flash %}
+      <div class="flash">{{ flash }}</div>
+    {% endif %}
+
+    <section class="stats">
+      <div class="stat"><div class="k">Пользователей</div><div class="v">{{ stats.users_total }}</div></div>
+      <div class="stat"><div class="k">Кодов</div><div class="v">{{ stats.codes_total }}</div></div>
+      <div class="stat"><div class="k">Активных кодов</div><div class="v">{{ stats.active_codes }}</div></div>
+      <div class="stat"><div class="k">Рассылок</div><div class="v">{{ stats.broadcasts_total }}</div></div>
+      <div class="stat"><div class="k">Ожидают отправки</div><div class="v">{{ stats.pending_broadcasts }}</div></div>
+    </section>
+
+    <div class="grid-2">
+      <section>
+        <h2>Коды доступа</h2>
+        <form method="post" action="/codes/add" class="row">
+          <input class="c3" name="code" placeholder="Код" required>
+          <input class="c7" name="description" placeholder="Компания / комментарий">
+          <button class="btn c2" type="submit">Добавить</button>
+        </form>
+        <div class="muted">Коды используются в deep-link `/start CODE` и команде `/code`.</div>
+        <table>
+          <thead>
+            <tr><th>Код</th><th>Описание</th><th>Статус</th><th>Действие</th></tr>
+          </thead>
+          <tbody>
+            {% for c in codes %}
+              <tr>
+                <td>{{ c.code }}</td>
+                <td>{{ c.description or "-" }}</td>
+                <td>
+                  {% if c.is_active %}
+                    <span class="status-ok">Активен</span>
+                  {% else %}
+                    <span class="status-off">Неактивен</span>
+                  {% endif %}
+                </td>
+                <td>
+                  <form method="post" action="/codes/status" class="row">
+                    <input type="hidden" name="code" value="{{ c.code }}">
+                    {% if c.is_active %}
+                      <input type="hidden" name="is_active" value="0">
+                      <button class="btn danger" type="submit">Деактивировать</button>
+                    {% else %}
+                      <input type="hidden" name="is_active" value="1">
+                      <button class="btn ok" type="submit">Активировать</button>
+                    {% endif %}
+                  </form>
+                </td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </section>
+
+      <section>
+        <h2>Рассылки</h2>
+        <form method="post" action="/broadcasts/create" class="row">
+          <textarea class="c12" name="message_text" placeholder="Текст рассылки" required></textarea>
+          <input class="c3" type="number" min="0" name="delay_minutes" value="0">
+          <div class="c7 muted">`0` = сразу, иначе отложить на N минут.</div>
+          <button class="btn c2" type="submit">Создать</button>
+        </form>
+        <h3>Последние рассылки</h3>
+        <table>
+          <thead>
+            <tr><th>ID</th><th>Статус</th><th>План</th><th>Отправлена</th><th>Текст</th></tr>
+          </thead>
+          <tbody>
+            {% for b in broadcasts %}
+              <tr>
+                <td>{{ b.id }}</td>
+                <td>{{ b.status }}</td>
+                <td>{{ b.scheduled_at or "-" }}</td>
+                <td>{{ b.sent_at or "-" }}</td>
+                <td>{{ (b.message_text or "")[:100] }}</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </section>
+    </div>
+
+    <section>
+      <h2>Контент бота</h2>
+      <form method="post" action="/settings/save" class="row">
+        <input class="c6" name="program_title" value="{{ settings_map.get('program_title', '') }}" placeholder="Название программы">
+        <input class="c6" name="program_url" value="{{ settings_map.get('program_url', '') }}" placeholder="URL программы">
+        <input class="c6" name="manager_title" value="{{ settings_map.get('manager_title', '') }}" placeholder="Подпись контакта менеджера">
+        <input class="c6" name="manager_url" value="{{ settings_map.get('manager_url', '') }}" placeholder="URL контакта менеджера">
+        <textarea class="c6" name="restricted_text" placeholder="Текст ограничения доступа">{{ settings_map.get('restricted_text', '') }}</textarea>
+        <textarea class="c6" name="welcome_template" placeholder="Приветствие">{{ settings_map.get('welcome_template', '') }}</textarea>
+        <button class="btn c3" type="submit">Сохранить настройки</button>
+      </form>
+    </section>
+
+    <div class="grid-2">
+      <section>
+        <h2>Полезные ссылки</h2>
+        <form method="post" action="/links/add" class="block">
+          <input type="hidden" name="section" value="useful_links">
+          <div class="row">
+            <input class="c4" name="title" placeholder="Название" required>
+            <input class="c6" name="url" placeholder="URL" required>
+            <input class="c2" type="number" name="position" value="100">
+            <label class="c2"><input type="checkbox" name="is_active" checked> Активна</label>
+            <button class="btn c2" type="submit">Добавить</button>
+          </div>
+        </form>
+        {% for link in useful_links %}
+          <form method="post" action="/links/update" class="block row">
+            <input type="hidden" name="link_id" value="{{ link.id }}">
+            <input class="c3" name="title" value="{{ link.title }}" required>
+            <input class="c6" name="url" value="{{ link.url }}" required>
+            <input class="c1" type="number" name="position" value="{{ link.position }}">
+            <label class="c1"><input type="checkbox" name="is_active" {% if link.is_active %}checked{% endif %}> On</label>
+            <button class="btn c1" type="submit">OK</button>
+          </form>
+          <form method="post" action="/links/delete" class="row">
+            <input type="hidden" name="link_id" value="{{ link.id }}">
+            <button class="btn danger c2" type="submit">Удалить</button>
+          </form>
+        {% endfor %}
+      </section>
+
+      <section>
+        <h2>Материалы партнёров</h2>
+        <form method="post" action="/links/add" class="block">
+          <input type="hidden" name="section" value="partner_materials">
+          <div class="row">
+            <input class="c4" name="title" placeholder="Название" required>
+            <input class="c6" name="url" placeholder="URL" required>
+            <input class="c2" type="number" name="position" value="100">
+            <label class="c2"><input type="checkbox" name="is_active" checked> Активен</label>
+            <button class="btn c2" type="submit">Добавить</button>
+          </div>
+        </form>
+        {% for link in materials %}
+          <form method="post" action="/links/update" class="block row">
+            <input type="hidden" name="link_id" value="{{ link.id }}">
+            <input class="c3" name="title" value="{{ link.title }}" required>
+            <input class="c6" name="url" value="{{ link.url }}" required>
+            <input class="c1" type="number" name="position" value="{{ link.position }}">
+            <label class="c1"><input type="checkbox" name="is_active" {% if link.is_active %}checked{% endif %}> On</label>
+            <button class="btn c1" type="submit">OK</button>
+          </form>
+          <form method="post" action="/links/delete" class="row">
+            <input type="hidden" name="link_id" value="{{ link.id }}">
+            <button class="btn danger c2" type="submit">Удалить</button>
+          </form>
+        {% endfor %}
+      </section>
+    </div>
+
+    <section>
+      <h2>Пользователи</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>ID</th><th>Telegram</th><th>Имя</th><th>Username</th><th>Код</th><th>Компания</th><th>Регистрация</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for u in users %}
+            <tr>
+              <td>{{ u.id }}</td>
+              <td>{{ u.telegram_id }}</td>
+              <td>{{ u.first_name or "-" }}</td>
+              <td>{{ u.username or "-" }}</td>
+              <td>{{ u.access_code }}</td>
+              <td>{{ u.company or "-" }}</td>
+              <td>{{ u.registered_at }}</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </section>
+  </main>
+</body>
+</html>
