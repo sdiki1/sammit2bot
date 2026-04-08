@@ -57,7 +57,7 @@ def load_settings() -> Settings:
     admin_panel_secret = os.getenv("ADMIN_PANEL_SECRET", "")
     if not admin_panel_secret:
         raise RuntimeError("Environment variable ADMIN_PANEL_SECRET is required")
-    admin_panel_port = int(os.getenv("ADMIN_PANEL_PORT", "8080"))
+    admin_panel_port = int(os.getenv("ADMIN_PANEL_PORT", "8030"))
 
     return Settings(
         bot_token=bot_token,
