@@ -1,60 +1,191 @@
 {
+  "public_welcome_text": "Добро пожаловать в СТАММИТ26. Выберите нужный раздел в меню.",
+  "restricted_text": "Доступ к приватным разделам ограничен. Получите персональную ссылку-приглашение у организатора.",
+  "welcome_template": "Добро пожаловать, {first_name}!\nВы авторизованы как {role_title} {summit_name}.\n\nИспользуйте меню ниже для доступа к актуальной информации.",
+  "referral_prize_text": "Приглашайте коллег и участвуйте в розыгрыше iPhone",
+  "partner_presentation_url": "https://example.com/partners/presentation.pdf",
+  "expert_form_url": "https://example.com/experts/form",
+  "influencer_form_url": "https://example.com/influencers/form",
   "program": {
     "title": "Актуальная программа саммита",
-    "url": "https://example.com/summit-program.pdf"
+    "url": "https://example.com/summit/program"
   },
-  "useful_links": [
+  "manager_contact": {
+    "title": "Написать менеджеру",
+    "url": "https://t.me/manager_username"
+  },
+  "public_menu_links": [
     {
-      "title": "Сайт саммита",
+      "title": "О СТАММИТ26",
+      "url": "https://example.com/about"
+    },
+    {
+      "title": "Купить билет",
+      "url": "https://example.com/tickets"
+    },
+    {
+      "title": "Для партнеров",
+      "url": "https://t.me/summit_partner_bot?start=PARTNER_CODE"
+    },
+    {
+      "title": "Для инфлюенсеров",
+      "url": "https://t.me/summit_influencer_bot?start=INFLUENCER_CODE"
+    },
+    {
+      "title": "Для экспертов",
+      "url": "https://t.me/summit_expert_bot?start=EXPERT_CODE"
+    },
+    {
+      "title": "Программа",
+      "url": "https://example.com/summit/program"
+    },
+    {
+      "title": "Спикеры",
+      "url": "https://example.com/summit/speakers"
+    },
+    {
+      "title": "Как добраться",
+      "url": "https://example.com/summit/route"
+    },
+    {
+      "title": "Ответы на вопросы",
+      "url": "https://example.com/summit/faq"
+    },
+    {
+      "title": "ПРОКАЧКА клиник",
+      "url": "https://example.com/summit/clinic-boost"
+    },
+    {
+      "title": "Приложение МЭТЧ для участников",
+      "url": "https://example.com/summit/match-app"
+    },
+    {
+      "title": "Канал СТАММИТ26",
+      "url": "https://t.me/summit26_channel"
+    },
+    {
+      "title": "Сайт СТАММИТ26",
       "url": "https://example.com"
     },
     {
-      "title": "Регистрация / вход",
-      "url": "https://example.com/login"
+      "title": "Условия для инфлюенсеров",
+      "url": "https://example.com/influencers/terms"
+    },
+    {
+      "title": "Заявка",
+      "url": "https://example.com/influencers/form"
+    }
+  ],
+  "partner_useful_links": [
+    {
+      "title": "Сайт саммита",
+      "url": "https://example.com"
     },
     {
       "title": "Страница партнёра",
       "url": "https://example.com/partners"
     },
     {
-      "title": "Онлайн-трансляция",
-      "url": "https://example.com/live"
+      "title": "Чат участников",
+      "url": "https://t.me/+replace_me"
+    }
+  ],
+  "expert_useful_links": [
+    {
+      "title": "Сайт саммита",
+      "url": "https://example.com"
+    },
+    {
+      "title": "Страница эксперта",
+      "url": "https://example.com/experts"
     },
     {
       "title": "Чат участников",
       "url": "https://t.me/+replace_me"
+    }
+  ],
+  "influencer_useful_links": [
+    {
+      "title": "Сайт саммита",
+      "url": "https://example.com"
     },
     {
-      "title": "Документы для скачивания",
-      "url": "https://example.com/docs"
+      "title": "Чат участников",
+      "url": "https://t.me/+replace_me"
     }
   ],
   "partner_materials": [
     {
-      "title": "Брендбук (PDF)",
-      "url": "https://example.com/materials/brandbook.pdf"
+      "title": "Карта",
+      "url": "https://example.com/partners/map"
+    },
+    {
+      "title": "Регламент заезда",
+      "url": "https://example.com/partners/checkin-rules"
+    },
+    {
+      "title": "Памятка работы на площадке",
+      "url": "https://example.com/partners/memo"
     },
     {
       "title": "Макеты для соцсетей (ZIP)",
-      "url": "https://example.com/materials/social-assets.zip"
+      "url": "https://example.com/partners/social-kit.zip"
     },
     {
-      "title": "Презентация о саммите",
-      "url": "https://example.com/materials/presentation.pdf"
+      "title": "Презентация о саммите (PDF)",
+      "url": "https://example.com/partners/presentation.pdf"
     },
     {
-      "title": "Инструкции для стенда",
-      "url": "https://example.com/materials/stand-guide.pdf"
-    },
-    {
-      "title": "Записи вебинаров",
-      "url": "https://example.com/materials/webinars"
+      "title": "Инструкции для стенда / выступления",
+      "url": "https://example.com/partners/stand-guide"
     }
   ],
-  "manager_contact": {
-    "title": "Написать менеджеру напрямую",
-    "url": "https://t.me/manager_username"
-  },
-  "restricted_text": "Доступ к этому боту ограничен. Напишите организатору и получите персональный код доступа.",
-  "welcome_template": "Добро пожаловать, {first_name}!\nВы авторизованы как партнёр {summit_name}.\n\nИспользуйте меню ниже для быстрого доступа к информации:"
+  "expert_materials": [
+    {
+      "title": "Карта",
+      "url": "https://example.com/experts/map"
+    },
+    {
+      "title": "Менторские разборы",
+      "url": "https://example.com/experts/mentoring"
+    },
+    {
+      "title": "Круглые столы",
+      "url": "https://example.com/experts/round-tables"
+    },
+    {
+      "title": "Лектории ЭКСПО ЗОНА",
+      "url": "https://example.com/experts/lectures"
+    },
+    {
+      "title": "Макеты для соцсетей (ZIP)",
+      "url": "https://example.com/experts/social-kit.zip"
+    },
+    {
+      "title": "Презентация о саммите (PDF/PPT)",
+      "url": "https://example.com/experts/presentation"
+    }
+  ],
+  "influencer_materials": [
+    {
+      "title": "Условия для инфлюенсеров",
+      "url": "https://example.com/influencers/terms"
+    },
+    {
+      "title": "Заявка",
+      "url": "https://example.com/influencers/form"
+    },
+    {
+      "title": "Карта",
+      "url": "https://example.com/influencers/map"
+    },
+    {
+      "title": "Макеты для соцсетей (ZIP)",
+      "url": "https://example.com/influencers/social-kit.zip"
+    },
+    {
+      "title": "Презентация о саммите (PDF/PPT)",
+      "url": "https://example.com/influencers/presentation"
+    }
+  ]
 }

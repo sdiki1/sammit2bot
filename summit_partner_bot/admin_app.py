@@ -12,7 +12,33 @@ from starlette.status import HTTP_303_SEE_OTHER
 
 from summit_partner_bot.config import load_settings
 from summit_partner_bot.content import ContentLoader
-from summit_partner_bot.db import Database
+from summit_partner_bot.db import (
+    ROLE_ALL,
+    ROLE_EXPERT,
+    ROLE_INFLUENCER,
+    ROLE_PARTNER,
+    SECTION_EXPERT_MATERIALS,
+    SECTION_EXPERT_USEFUL_LINKS,
+    SECTION_INFLUENCER_MATERIALS,
+    SECTION_INFLUENCER_USEFUL_LINKS,
+    SECTION_PARTNER_MATERIALS,
+    SECTION_PARTNER_USEFUL_LINKS,
+    SECTION_PUBLIC_MENU_LINKS,
+    Database,
+    normalize_role,
+    normalize_target_role,
+)
+
+
+PRESET_SECTIONS = [
+    SECTION_PUBLIC_MENU_LINKS,
+    SECTION_PARTNER_USEFUL_LINKS,
+    SECTION_EXPERT_USEFUL_LINKS,
+    SECTION_INFLUENCER_USEFUL_LINKS,
+    SECTION_PARTNER_MATERIALS,
+    SECTION_EXPERT_MATERIALS,
+    SECTION_INFLUENCER_MATERIALS,
+]
 
 
 def _is_authenticated(request: Request) -> bool:
@@ -52,7 +78,7 @@ def create_app() -> FastAPI:
     content_loader = ContentLoader(db=db, path=settings.content_file)
     templates = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
 
-    app = FastAPI(title="Summit Partner Admin")
+    app = FastAPI(title="Summit Admin")
     app.add_middleware(
         SessionMiddleware,
         secret_key=settings.admin_panel_secret,
@@ -108,13 +134,21 @@ def create_app() -> FastAPI:
             return maybe_redirect
 
         stats = await db.get_stats()
-        users = await db.list_users(limit=150)
+        users = await db.list_users(limit=300)
+        pending_users = await db.list_pending_users(limit=200)
         codes = await db.list_access_codes(limit=300)
-        broadcasts = await db.list_broadcasts(limit=100)
+        broadcasts = await db.list_broadcasts(limit=120)
+        feedback_items = await db.list_feedback(limit=120)
         settings_map = await db.get_content_settings_map()
-        links_all = await db.list_all_content_links()
-        useful_links = [row for row in links_all if row["section"] == "useful_links"]
-        materials = [row for row in links_all if row["section"] == "partner_materials"]
+
+        links_all = await db.list_all_content_links(include_inactive=True)
+        links_by_section: dict[str, list[Any]] = {}
+        for row in links_all:
+            section = str(row["section"])
+            links_by_section.setdefault(section, []).append(row)
+
+        dynamic_sections = await db.list_content_sections()
+        sections = sorted(set(PRESET_SECTIONS + dynamic_sections))
 
         return templates.TemplateResponse(
             request=request,
@@ -123,12 +157,16 @@ def create_app() -> FastAPI:
                 "flash": _pop_flash(request),
                 "stats": stats,
                 "users": users,
+                "pending_users": pending_users,
                 "codes": codes,
                 "broadcasts": broadcasts,
-                "useful_links": useful_links,
-                "materials": materials,
+                "feedback_items": feedback_items,
+                "links_by_section": links_by_section,
+                "sections": sections,
                 "settings_map": settings_map,
                 "settings": settings,
+                "roles": [ROLE_PARTNER, ROLE_EXPERT, ROLE_INFLUENCER],
+                "targets": [ROLE_ALL, ROLE_PARTNER, ROLE_EXPERT, ROLE_INFLUENCER],
             },
         )
 
@@ -136,12 +174,13 @@ def create_app() -> FastAPI:
     async def add_code(
         request: Request,
         code: str = Form(...),
+        role: str = Form(ROLE_PARTNER),
         description: str = Form(""),
     ) -> RedirectResponse:
         maybe_redirect = _require_auth(request)
         if maybe_redirect is not None:
             return maybe_redirect
-        await db.add_or_update_access_code(code=code, description=description, is_active=True)
+        await db.add_or_update_access_code(code=code, role=normalize_role(role), description=description, is_active=True)
         _set_flash(request, "Код сохранён.")
         return _redirect("/dashboard")
 
@@ -156,6 +195,31 @@ def create_app() -> FastAPI:
             return maybe_redirect
         await db.set_access_code_status(code=code, is_active=(is_active == "1"))
         _set_flash(request, "Статус кода обновлён.")
+        return _redirect("/dashboard")
+
+    @app.post("/users/approve")
+    async def approve_user(
+        request: Request,
+        telegram_id: int = Form(...),
+    ) -> RedirectResponse:
+        maybe_redirect = _require_auth(request)
+        if maybe_redirect is not None:
+            return maybe_redirect
+        await db.approve_user(telegram_id=telegram_id, approved_by=0)
+        _set_flash(request, f"Пользователь {telegram_id} подтверждён.")
+        return _redirect("/dashboard")
+
+    @app.post("/users/reject")
+    async def reject_user(
+        request: Request,
+        telegram_id: int = Form(...),
+        reason: str = Form(""),
+    ) -> RedirectResponse:
+        maybe_redirect = _require_auth(request)
+        if maybe_redirect is not None:
+            return maybe_redirect
+        await db.reject_user(telegram_id=telegram_id, approved_by=0, reason=reason)
+        _set_flash(request, f"Пользователь {telegram_id} отклонён.")
         return _redirect("/dashboard")
 
     @app.post("/links/add")
@@ -187,6 +251,7 @@ def create_app() -> FastAPI:
     async def update_link(
         request: Request,
         link_id: int = Form(...),
+        section: str = Form(...),
         title: str = Form(...),
         url: str = Form(...),
         position: int = Form(100),
@@ -197,6 +262,7 @@ def create_app() -> FastAPI:
             return maybe_redirect
         await db.update_content_link(
             link_id=link_id,
+            section=section,
             title=title,
             url=url,
             position=position,
@@ -226,6 +292,11 @@ def create_app() -> FastAPI:
         manager_url: str = Form(""),
         restricted_text: str = Form(""),
         welcome_template: str = Form(""),
+        public_welcome_text: str = Form(""),
+        partner_presentation_url: str = Form(""),
+        expert_form_url: str = Form(""),
+        influencer_form_url: str = Form(""),
+        referral_prize_text: str = Form(""),
     ) -> RedirectResponse:
         maybe_redirect = _require_auth(request)
         if maybe_redirect is not None:
@@ -238,6 +309,11 @@ def create_app() -> FastAPI:
                 "manager_url": manager_url.strip(),
                 "restricted_text": restricted_text.strip(),
                 "welcome_template": welcome_template.strip(),
+                "public_welcome_text": public_welcome_text.strip(),
+                "partner_presentation_url": partner_presentation_url.strip(),
+                "expert_form_url": expert_form_url.strip(),
+                "influencer_form_url": influencer_form_url.strip(),
+                "referral_prize_text": referral_prize_text.strip(),
             }
         )
         _set_flash(request, "Настройки сохранены.")
@@ -247,6 +323,7 @@ def create_app() -> FastAPI:
     async def create_broadcast(
         request: Request,
         message_text: str = Form(...),
+        target_role: str = Form(ROLE_ALL),
         delay_minutes: str | None = Form(default="0"),
     ) -> RedirectResponse:
         maybe_redirect = _require_auth(request)
@@ -263,6 +340,7 @@ def create_app() -> FastAPI:
 
         await db.create_broadcast(
             created_by=0,
+            target_role=normalize_target_role(target_role),
             message_text=text,
             source_chat_id=None,
             source_message_id=None,

@@ -1,20 +1,25 @@
-# Summit Partner Bot
+# Summit 2026 Bot
 
-Telegram-бот для коммуникации организаторов саммита с партнёрами + веб-админка.
+Telegram-бот для СТАММИТ26 с общим меню и приватными сценариями для партнёров, экспертов и инфлюенсеров.
 
 ## Что реализовано
 
-- Приватный доступ партнёров через deep-link `/start CODE` и `/code CODE`.
-- Главное меню в Telegram: новости, программа, полезные ссылки, материалы, связь с менеджером.
-- Рассылки: мгновенные и отложенные, лог доставки, статистика.
-- Вопросы в поддержку с reply-механизмом ответа менеджера.
-- Веб-админка (FastAPI):
-  - управление кодами доступа;
-  - управление ссылками и материалами;
-  - редактирование текстов/контента бота;
-  - создание текстовых рассылок.
-- PostgreSQL как основная БД.
-- Запуск всех сервисов через `docker-compose`.
+- Публичный бот с меню для участников (ссылки, программа, FAQ, канал, сайт, отзывы, реферальная кнопка).
+- Приватный доступ по deep-link приглашениям с ролью:
+  - `partner`;
+  - `expert`;
+  - `influencer`.
+- Процесс согласования доступа: заявка `pending` -> подтверждение/отклонение админом.
+- Раздельные меню и материалы по ролям.
+- Рассылки:
+  - мгновенные и отложенные;
+  - с таргетом `all|partner|expert|influencer`;
+  - лог доставки и статистика.
+- Связь с менеджером через support-чат + reply-мост обратно пользователю.
+- Сбор отзывов и их лог в БД.
+- Реферальные ссылки для подтверждённых пользователей + учёт переходов/конверсий.
+- Выгрузка базы пользователей в CSV.
+- Админ-панель FastAPI для управления кодами, контентом, заявками и рассылками.
 
 ## Стек
 
@@ -35,29 +40,26 @@ cp .env.example .env
 Ключевые переменные:
 
 - `BOT_TOKEN` — токен Telegram-бота.
-- `ADMIN_IDS` — id админов бота (через запятую).
-- `SUPPORT_CHAT_IDS` — id support-чатов (через запятую).
+- `ADMIN_IDS` — Telegram ID администраторов (через запятую).
+- `SUPPORT_CHAT_IDS` — Telegram ID чатов поддержки (через запятую).
 - `DATABASE_URL` — строка подключения PostgreSQL.
-- `CONTENT_FILE` — JSON с начальными данными для первичного заполнения БД.
-- `ADMIN_PANEL_USERNAME` / `ADMIN_PANEL_PASSWORD` — логин/пароль веб-админки.
-- `ADMIN_PANEL_SECRET` — секрет сессий админки.
-- `ADMIN_PANEL_PORT` — порт админки в контейнере (по умолчанию `8080`).
+- `CONTENT_FILE` — JSON начального контента.
+- `RATE_LIMIT_SECONDS` — ограничение частоты сообщений.
+- `SUMMIT_NAME` — имя события.
+- `ADMIN_PANEL_USERNAME` / `ADMIN_PANEL_PASSWORD` — доступ в веб-админку.
+- `ADMIN_PANEL_SECRET` — секрет сессии админки.
+- `ADMIN_PANEL_PORT` — порт веб-админки.
 
-## Локальный запуск без Docker
+## Локальный запуск
 
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
-```
-
-Запуск бота:
-
-```bash
 python run.py
 ```
 
-Запуск админки:
+Админка:
 
 ```bash
 python run_admin.py
@@ -69,46 +71,44 @@ python run_admin.py
 docker compose up -d --build
 ```
 
-Сервисы:
+## Админ-команды в Telegram
 
-- `db` — PostgreSQL, внешний порт `5544`.
-- `bot` — Telegram-бот.
-- `admin` — веб-админка на `http://localhost:8080`.
+Доступны только для `ADMIN_IDS`.
 
-Проверка:
-
-```bash
-docker compose ps
-docker compose logs -f bot
-docker compose logs -f admin
-```
-
-## PostgreSQL (порт 5544)
-
-В `docker-compose.yml` используется:
-
-- порт хоста: `5544`
-- порт контейнера: `5432`
-- БД: `summit_bot`
-- пользователь: `summit`
-- пароль: `summit`
-
-Строка подключения внутри контейнеров:
-
-`postgresql://summit:summit@db:5432/summit_bot`
-
-Строка подключения с хоста:
-
-`postgresql://summit:summit@localhost:5544/summit_bot`
-
-## Админ-команды в Telegram (дополнительно)
-
-- `/add_code CODE Описание`
+- `/add_code CODE ROLE описание`
 - `/disable_code CODE`
 - `/enable_code CODE`
 - `/list_codes`
-- `/broadcast Текст`
-- `reply + /broadcast` для медиа
-- `/broadcast_in МИНУТЫ Текст`
+- `/pending_requests`
+- `/approve_user TELEGRAM_ID`
+- `/reject_user TELEGRAM_ID причина`
+- `/broadcast [all|partner|expert|influencer] Текст`
+- `reply + /broadcast [роль]` для медиа-рассылок
+- `/broadcast_in МИНУТЫ [роль] Текст`
 - `/broadcast_stats ID`
+- `/save_link SECTION | Название | URL`
+- `/save_material SECTION | Название` (команда в reply на документ/фото/видео)
+- `/export_users`
 
+## Секции ссылок/материалов
+
+Редактируются через админку или командами `/save_link` / `/save_material`.
+
+- `public_menu_links`
+- `partner_useful_links`
+- `expert_useful_links`
+- `influencer_useful_links`
+- `partner_materials`
+- `expert_materials`
+- `influencer_materials`
+
+## Форматы медиа-материалов
+
+В секциях материалов `url` может быть:
+
+- обычный URL (`https://...`)
+- `file_id:...`
+- `photo_id:...`
+- `video_id:...`
+
+Это позволяет администратору загружать файлы прямо через Telegram-бота.

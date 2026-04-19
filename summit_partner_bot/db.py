@@ -5,22 +5,64 @@ from typing import Any
 
 import asyncpg
 
-
 DEFAULT_RESTRICTED_TEXT = (
-    "Доступ к этому боту ограничен. Напишите организатору и получите персональный код доступа."
+    "Доступ к приватным разделам ограничен. Напишите организатору и получите персональный код приглашения."
 )
 DEFAULT_WELCOME_TEMPLATE = (
     "Добро пожаловать, {first_name}!\n"
-    "Вы авторизованы как партнёр {summit_name}.\n\n"
-    "Используйте меню ниже для быстрого доступа к информации:"
+    "Ваша заявка на роль {role_title} по саммиту {summit_name} принята.\n\n"
+    "После подтверждения организатором откроется полное меню."
+)
+DEFAULT_PUBLIC_WELCOME = (
+    "Добро пожаловать в бот СТАММИТ26.\n"
+    "Выберите нужный раздел в меню ниже."
 )
 
-SECTION_USEFUL_LINKS = "useful_links"
+ROLE_PARTNER = "partner"
+ROLE_EXPERT = "expert"
+ROLE_INFLUENCER = "influencer"
+ROLE_ALL = "all"
+ROLES = {ROLE_PARTNER, ROLE_EXPERT, ROLE_INFLUENCER}
+
+STATUS_PENDING = "pending"
+STATUS_APPROVED = "approved"
+STATUS_REJECTED = "rejected"
+
+SECTION_PUBLIC_MENU_LINKS = "public_menu_links"
+SECTION_PARTNER_USEFUL_LINKS = "partner_useful_links"
+SECTION_EXPERT_USEFUL_LINKS = "expert_useful_links"
+SECTION_INFLUENCER_USEFUL_LINKS = "influencer_useful_links"
 SECTION_PARTNER_MATERIALS = "partner_materials"
+SECTION_EXPERT_MATERIALS = "expert_materials"
+SECTION_INFLUENCER_MATERIALS = "influencer_materials"
+
+LEGACY_SECTION_USEFUL_LINKS = "useful_links"
 
 
 def normalize_code(code: str) -> str:
     return code.strip().upper()
+
+
+def normalize_role(value: str | None, default: str = ROLE_PARTNER) -> str:
+    role = (value or "").strip().lower()
+    if role in ROLES:
+        return role
+    return default
+
+
+def normalize_target_role(value: str | None) -> str:
+    role = (value or "").strip().lower()
+    if role in ROLES:
+        return role
+    return ROLE_ALL
+
+
+def role_title(role: str) -> str:
+    if role == ROLE_EXPERT:
+        return "эксперт"
+    if role == ROLE_INFLUENCER:
+        return "инфлюенсер"
+    return "партнёр"
 
 
 def _normalize_dt(value: datetime | str | None) -> datetime | None:
@@ -37,7 +79,6 @@ def _normalize_dt(value: datetime | str | None) -> datetime | None:
 
 
 def _extract_rowcount(status: str) -> int:
-    # asyncpg returns "UPDATE <count>", "DELETE <count>"...
     parts = status.split()
     if not parts:
         return 0
@@ -80,13 +121,25 @@ class Database:
                     telegram_id BIGINT NOT NULL UNIQUE,
                     username TEXT,
                     first_name TEXT,
-                    access_code TEXT NOT NULL,
+                    role TEXT NOT NULL DEFAULT 'partner',
+                    access_status TEXT NOT NULL DEFAULT 'approved',
+                    access_code TEXT,
+                    full_name TEXT,
+                    phone TEXT,
                     company TEXT,
+                    inn TEXT,
+                    requested_at TIMESTAMPTZ,
+                    approved_at TIMESTAMPTZ,
+                    approved_by BIGINT,
+                    rejection_reason TEXT,
+                    referred_by BIGINT,
+                    referral_code TEXT UNIQUE,
                     registered_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
                 );
 
                 CREATE TABLE IF NOT EXISTS access_codes (
                     code TEXT PRIMARY KEY,
+                    role TEXT NOT NULL DEFAULT 'partner',
                     description TEXT,
                     is_active BOOLEAN NOT NULL DEFAULT TRUE,
                     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
@@ -95,6 +148,7 @@ class Database:
                 CREATE TABLE IF NOT EXISTS broadcasts (
                     id BIGSERIAL PRIMARY KEY,
                     created_by BIGINT NOT NULL,
+                    target_role TEXT NOT NULL DEFAULT 'all',
                     message_text TEXT,
                     source_chat_id BIGINT,
                     source_message_id BIGINT,
@@ -120,7 +174,7 @@ class Database:
 
                 CREATE TABLE IF NOT EXISTS content_links (
                     id BIGSERIAL PRIMARY KEY,
-                    section TEXT NOT NULL CHECK (section IN ('useful_links', 'partner_materials')),
+                    section TEXT NOT NULL,
                     title TEXT NOT NULL,
                     url TEXT NOT NULL,
                     position INTEGER NOT NULL DEFAULT 100,
@@ -128,12 +182,76 @@ class Database:
                     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
                 );
 
+                CREATE TABLE IF NOT EXISTS feedback_messages (
+                    id BIGSERIAL PRIMARY KEY,
+                    telegram_id BIGINT NOT NULL,
+                    user_role TEXT,
+                    message_text TEXT NOT NULL,
+                    source TEXT NOT NULL DEFAULT 'feedback',
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                );
+
+                CREATE TABLE IF NOT EXISTS referral_clicks (
+                    id BIGSERIAL PRIMARY KEY,
+                    owner_telegram_id BIGINT NOT NULL,
+                    guest_telegram_id BIGINT NOT NULL UNIQUE,
+                    ref_code TEXT NOT NULL,
+                    clicked_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                );
+
                 CREATE INDEX IF NOT EXISTS idx_users_telegram_id ON users(telegram_id);
+                CREATE INDEX IF NOT EXISTS idx_users_status_role ON users(access_status, role);
                 CREATE INDEX IF NOT EXISTS idx_broadcasts_scheduled_at ON broadcasts(scheduled_at);
                 CREATE INDEX IF NOT EXISTS idx_deliveries_broadcast_id ON broadcast_deliveries(broadcast_id);
                 CREATE INDEX IF NOT EXISTS idx_content_links_section_position ON content_links(section, position, id);
+                CREATE INDEX IF NOT EXISTS idx_referral_clicks_owner ON referral_clicks(owner_telegram_id);
                 """
             )
+
+            await conn.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS role TEXT")
+            await conn.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS access_status TEXT")
+            await conn.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS full_name TEXT")
+            await conn.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS phone TEXT")
+            await conn.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS inn TEXT")
+            await conn.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS requested_at TIMESTAMPTZ")
+            await conn.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS approved_at TIMESTAMPTZ")
+            await conn.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS approved_by BIGINT")
+            await conn.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS rejection_reason TEXT")
+            await conn.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS referred_by BIGINT")
+            await conn.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS referral_code TEXT")
+
+            await conn.execute("ALTER TABLE access_codes ADD COLUMN IF NOT EXISTS role TEXT")
+            await conn.execute("ALTER TABLE broadcasts ADD COLUMN IF NOT EXISTS target_role TEXT")
+
+            await conn.execute("UPDATE users SET role = COALESCE(NULLIF(role, ''), 'partner')")
+            await conn.execute("UPDATE users SET access_status = COALESCE(NULLIF(access_status, ''), 'approved')")
+            await conn.execute("UPDATE access_codes SET role = COALESCE(NULLIF(role, ''), 'partner')")
+            await conn.execute("UPDATE broadcasts SET target_role = COALESCE(NULLIF(target_role, ''), 'all')")
+
+            await conn.execute("ALTER TABLE users ALTER COLUMN role SET DEFAULT 'partner'")
+            await conn.execute("ALTER TABLE users ALTER COLUMN access_status SET DEFAULT 'approved'")
+            await conn.execute("ALTER TABLE access_codes ALTER COLUMN role SET DEFAULT 'partner'")
+            await conn.execute("ALTER TABLE broadcasts ALTER COLUMN target_role SET DEFAULT 'all'")
+
+            await conn.execute("ALTER TABLE users ALTER COLUMN role SET NOT NULL")
+            await conn.execute("ALTER TABLE users ALTER COLUMN access_status SET NOT NULL")
+            await conn.execute("ALTER TABLE access_codes ALTER COLUMN role SET NOT NULL")
+            await conn.execute("ALTER TABLE broadcasts ALTER COLUMN target_role SET NOT NULL")
+
+            constraints = await conn.fetch(
+                """
+                SELECT conname
+                FROM pg_constraint
+                WHERE conrelid = 'content_links'::regclass
+                  AND contype = 'c'
+                """
+            )
+            for row in constraints:
+                name = str(row["conname"])
+                if "content_links_section_check" in name:
+                    await conn.execute(f'ALTER TABLE content_links DROP CONSTRAINT "{name}"')
+
+            await conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_users_referral_code ON users(referral_code)")
 
     async def get_user(self, telegram_id: int) -> asyncpg.Record | None:
         async with self.pool.acquire() as conn:
@@ -143,7 +261,18 @@ class Database:
             )
 
     async def is_authorized(self, telegram_id: int) -> bool:
-        return (await self.get_user(telegram_id)) is not None
+        user = await self.get_user(telegram_id)
+        if user is None:
+            return False
+        return str(user["access_status"]) == STATUS_APPROVED
+
+    async def is_authorized_role(self, telegram_id: int, role: str) -> bool:
+        user = await self.get_user(telegram_id)
+        if user is None:
+            return False
+        if str(user["access_status"]) != STATUS_APPROVED:
+            return False
+        return normalize_role(user["role"]) == normalize_role(role)
 
     async def get_access_code(self, code: str) -> asyncpg.Record | None:
         normalized = normalize_code(code)
@@ -157,19 +286,23 @@ class Database:
         self,
         code: str,
         description: str,
+        role: str = ROLE_PARTNER,
         is_active: bool = True,
     ) -> None:
         normalized = normalize_code(code)
+        role = normalize_role(role)
         async with self.pool.acquire() as conn:
             await conn.execute(
                 """
-                INSERT INTO access_codes(code, description, is_active, created_at)
-                VALUES ($1, $2, $3, NOW())
+                INSERT INTO access_codes(code, role, description, is_active, created_at)
+                VALUES ($1, $2, $3, $4, NOW())
                 ON CONFLICT(code) DO UPDATE SET
+                    role = EXCLUDED.role,
                     description = EXCLUDED.description,
                     is_active = EXCLUDED.is_active
                 """,
                 normalized,
+                role,
                 description.strip(),
                 is_active,
             )
@@ -188,7 +321,7 @@ class Database:
         async with self.pool.acquire() as conn:
             return await conn.fetch(
                 """
-                SELECT code, description, is_active, created_at
+                SELECT code, role, description, is_active, created_at
                 FROM access_codes
                 ORDER BY created_at DESC
                 LIMIT $1
@@ -196,43 +329,156 @@ class Database:
                 limit,
             )
 
-    async def upsert_authorized_user(
+    async def upsert_access_request(
         self,
         telegram_id: int,
         username: str | None,
         first_name: str | None,
+        role: str,
         access_code: str,
-        company: str | None,
+        full_name: str | None,
+        phone: str | None,
+        company: str | None = None,
+        inn: str | None = None,
+        referred_by: int | None = None,
     ) -> None:
+        role = normalize_role(role)
         normalized = normalize_code(access_code)
         async with self.pool.acquire() as conn:
             await conn.execute(
                 """
-                INSERT INTO users(telegram_id, username, first_name, access_code, company, registered_at)
-                VALUES ($1, $2, $3, $4, $5, NOW())
+                INSERT INTO users(
+                    telegram_id,
+                    username,
+                    first_name,
+                    role,
+                    access_status,
+                    access_code,
+                    full_name,
+                    phone,
+                    company,
+                    inn,
+                    requested_at,
+                    approved_at,
+                    approved_by,
+                    rejection_reason,
+                    referred_by,
+                    registered_at
+                )
+                VALUES (
+                    $1, $2, $3, $4, 'pending', $5, $6, $7, $8, $9,
+                    NOW(), NULL, NULL, NULL, $10, NOW()
+                )
                 ON CONFLICT(telegram_id) DO UPDATE SET
                     username = EXCLUDED.username,
                     first_name = EXCLUDED.first_name,
+                    role = EXCLUDED.role,
+                    access_status = 'pending',
                     access_code = EXCLUDED.access_code,
-                    company = EXCLUDED.company
+                    full_name = EXCLUDED.full_name,
+                    phone = EXCLUDED.phone,
+                    company = EXCLUDED.company,
+                    inn = EXCLUDED.inn,
+                    requested_at = NOW(),
+                    approved_at = NULL,
+                    approved_by = NULL,
+                    rejection_reason = NULL,
+                    referred_by = COALESCE(EXCLUDED.referred_by, users.referred_by)
                 """,
                 telegram_id,
                 username,
                 first_name,
+                role,
                 normalized,
+                (full_name or "").strip() or None,
+                (phone or "").strip() or None,
                 (company or "").strip() or None,
+                (inn or "").strip() or None,
+                referred_by,
             )
 
-    async def list_authorized_user_ids(self) -> list[int]:
+    async def approve_user(self, telegram_id: int, approved_by: int) -> asyncpg.Record | None:
         async with self.pool.acquire() as conn:
-            rows = await conn.fetch("SELECT telegram_id FROM users")
-        return [int(row["telegram_id"]) for row in rows]
+            return await conn.fetchrow(
+                """
+                UPDATE users
+                SET access_status = 'approved',
+                    approved_at = NOW(),
+                    approved_by = $2,
+                    rejection_reason = NULL
+                WHERE telegram_id = $1
+                RETURNING *
+                """,
+                telegram_id,
+                approved_by,
+            )
 
-    async def list_users(self, limit: int = 300) -> list[asyncpg.Record]:
+    async def reject_user(self, telegram_id: int, approved_by: int, reason: str | None = None) -> asyncpg.Record | None:
+        async with self.pool.acquire() as conn:
+            return await conn.fetchrow(
+                """
+                UPDATE users
+                SET access_status = 'rejected',
+                    approved_by = $2,
+                    rejection_reason = $3
+                WHERE telegram_id = $1
+                RETURNING *
+                """,
+                telegram_id,
+                approved_by,
+                (reason or "").strip() or None,
+            )
+
+    async def list_pending_users(self, limit: int = 200) -> list[asyncpg.Record]:
         async with self.pool.acquire() as conn:
             return await conn.fetch(
                 """
-                SELECT id, telegram_id, username, first_name, access_code, company, registered_at
+                SELECT *
+                FROM users
+                WHERE access_status = 'pending'
+                ORDER BY requested_at DESC NULLS LAST, registered_at DESC
+                LIMIT $1
+                """,
+                limit,
+            )
+
+    async def list_authorized_user_ids(self, role: str = ROLE_ALL) -> list[int]:
+        target = normalize_target_role(role)
+        async with self.pool.acquire() as conn:
+            if target == ROLE_ALL:
+                rows = await conn.fetch(
+                    "SELECT telegram_id FROM users WHERE access_status = 'approved'"
+                )
+            else:
+                rows = await conn.fetch(
+                    "SELECT telegram_id FROM users WHERE access_status = 'approved' AND role = $1",
+                    target,
+                )
+        return [int(row["telegram_id"]) for row in rows]
+
+    async def list_users(self, limit: int = 500) -> list[asyncpg.Record]:
+        async with self.pool.acquire() as conn:
+            return await conn.fetch(
+                """
+                SELECT
+                    id,
+                    telegram_id,
+                    username,
+                    first_name,
+                    role,
+                    access_status,
+                    access_code,
+                    full_name,
+                    phone,
+                    company,
+                    inn,
+                    requested_at,
+                    approved_at,
+                    approved_by,
+                    rejection_reason,
+                    referred_by,
+                    referral_code,
+                    registered_at
                 FROM users
                 ORDER BY registered_at DESC
                 LIMIT $1
@@ -247,17 +493,28 @@ class Database:
         source_chat_id: int | None,
         source_message_id: int | None,
         scheduled_at: datetime | str | None,
+        target_role: str = ROLE_ALL,
         status: str = "scheduled",
     ) -> int:
         scheduled_dt = _normalize_dt(scheduled_at)
+        role = normalize_target_role(target_role)
         async with self.pool.acquire() as conn:
             row = await conn.fetchrow(
                 """
-                INSERT INTO broadcasts(created_by, message_text, source_chat_id, source_message_id, scheduled_at, status)
-                VALUES($1, $2, $3, $4, $5, $6)
+                INSERT INTO broadcasts(
+                    created_by,
+                    target_role,
+                    message_text,
+                    source_chat_id,
+                    source_message_id,
+                    scheduled_at,
+                    status
+                )
+                VALUES($1, $2, $3, $4, $5, $6, $7)
                 RETURNING id
                 """,
                 created_by,
+                role,
                 message_text,
                 source_chat_id,
                 source_message_id,
@@ -292,24 +549,38 @@ class Database:
                 """
             )
 
-    async def get_recent_sent_broadcasts(self, limit: int = 5) -> list[asyncpg.Record]:
+    async def get_recent_sent_broadcasts(self, limit: int = 5, role: str = ROLE_ALL) -> list[asyncpg.Record]:
+        target = normalize_target_role(role)
         async with self.pool.acquire() as conn:
+            if target == ROLE_ALL:
+                return await conn.fetch(
+                    """
+                    SELECT id, target_role, message_text, source_chat_id, source_message_id, sent_at
+                    FROM broadcasts
+                    WHERE sent_at IS NOT NULL
+                    ORDER BY sent_at DESC
+                    LIMIT $1
+                    """,
+                    limit,
+                )
             return await conn.fetch(
                 """
-                SELECT id, message_text, source_chat_id, source_message_id, sent_at
+                SELECT id, target_role, message_text, source_chat_id, source_message_id, sent_at
                 FROM broadcasts
                 WHERE sent_at IS NOT NULL
+                  AND (target_role = 'all' OR target_role = $2)
                 ORDER BY sent_at DESC
                 LIMIT $1
                 """,
                 limit,
+                target,
             )
 
-    async def list_broadcasts(self, limit: int = 100) -> list[asyncpg.Record]:
+    async def list_broadcasts(self, limit: int = 120) -> list[asyncpg.Record]:
         async with self.pool.acquire() as conn:
             return await conn.fetch(
                 """
-                SELECT id, created_by, message_text, scheduled_at, sent_at, status
+                SELECT id, created_by, target_role, message_text, scheduled_at, sent_at, status
                 FROM broadcasts
                 ORDER BY id DESC
                 LIMIT $1
@@ -404,8 +675,8 @@ class Database:
         position: int = 100,
         is_active: bool = True,
     ) -> int:
-        section = section.strip()
-        if section not in (SECTION_USEFUL_LINKS, SECTION_PARTNER_MATERIALS):
+        section_value = section.strip()
+        if not section_value:
             raise ValueError("Invalid section")
         async with self.pool.acquire() as conn:
             row = await conn.fetchrow(
@@ -414,7 +685,7 @@ class Database:
                 VALUES($1, $2, $3, $4, $5)
                 RETURNING id
                 """,
-                section,
+                section_value,
                 title.strip(),
                 url.strip(),
                 position,
@@ -429,20 +700,36 @@ class Database:
         url: str,
         position: int,
         is_active: bool,
+        section: str | None = None,
     ) -> int:
         async with self.pool.acquire() as conn:
-            status = await conn.execute(
-                """
-                UPDATE content_links
-                SET title = $1, url = $2, position = $3, is_active = $4
-                WHERE id = $5
-                """,
-                title.strip(),
-                url.strip(),
-                position,
-                is_active,
-                link_id,
-            )
+            if section is None:
+                status = await conn.execute(
+                    """
+                    UPDATE content_links
+                    SET title = $1, url = $2, position = $3, is_active = $4
+                    WHERE id = $5
+                    """,
+                    title.strip(),
+                    url.strip(),
+                    position,
+                    is_active,
+                    link_id,
+                )
+            else:
+                status = await conn.execute(
+                    """
+                    UPDATE content_links
+                    SET section = $1, title = $2, url = $3, position = $4, is_active = $5
+                    WHERE id = $6
+                    """,
+                    section.strip(),
+                    title.strip(),
+                    url.strip(),
+                    position,
+                    is_active,
+                    link_id,
+                )
         return _extract_rowcount(status)
 
     async def delete_content_link(self, link_id: int) -> int:
@@ -455,8 +742,8 @@ class Database:
         section: str,
         include_inactive: bool = False,
     ) -> list[asyncpg.Record]:
-        section = section.strip()
-        if section not in (SECTION_USEFUL_LINKS, SECTION_PARTNER_MATERIALS):
+        section_value = section.strip()
+        if not section_value:
             return []
         async with self.pool.acquire() as conn:
             if include_inactive:
@@ -467,7 +754,7 @@ class Database:
                     WHERE section = $1
                     ORDER BY position ASC, id ASC
                     """,
-                    section,
+                    section_value,
                 )
             return await conn.fetch(
                 """
@@ -476,18 +763,165 @@ class Database:
                 WHERE section = $1 AND is_active = TRUE
                 ORDER BY position ASC, id ASC
                 """,
-                section,
+                section_value,
             )
 
-    async def list_all_content_links(self) -> list[asyncpg.Record]:
+    async def list_all_content_links(self, include_inactive: bool = True) -> list[asyncpg.Record]:
         async with self.pool.acquire() as conn:
+            if include_inactive:
+                return await conn.fetch(
+                    """
+                    SELECT id, section, title, url, position, is_active, created_at
+                    FROM content_links
+                    ORDER BY section ASC, position ASC, id ASC
+                    """
+                )
             return await conn.fetch(
                 """
                 SELECT id, section, title, url, position, is_active, created_at
                 FROM content_links
+                WHERE is_active = TRUE
                 ORDER BY section ASC, position ASC, id ASC
                 """
             )
+
+    async def list_content_sections(self) -> list[str]:
+        async with self.pool.acquire() as conn:
+            rows = await conn.fetch("SELECT DISTINCT section FROM content_links ORDER BY section")
+        return [str(row["section"]) for row in rows]
+
+    async def add_feedback(
+        self,
+        telegram_id: int,
+        message_text: str,
+        user_role: str | None,
+        source: str = "feedback",
+    ) -> int:
+        async with self.pool.acquire() as conn:
+            row = await conn.fetchrow(
+                """
+                INSERT INTO feedback_messages(telegram_id, user_role, message_text, source, created_at)
+                VALUES($1, $2, $3, $4, NOW())
+                RETURNING id
+                """,
+                telegram_id,
+                normalize_role(user_role) if user_role else None,
+                message_text.strip(),
+                source.strip() or "feedback",
+            )
+        return int(row["id"])
+
+    async def list_feedback(self, limit: int = 200) -> list[asyncpg.Record]:
+        async with self.pool.acquire() as conn:
+            return await conn.fetch(
+                """
+                SELECT id, telegram_id, user_role, message_text, source, created_at
+                FROM feedback_messages
+                ORDER BY id DESC
+                LIMIT $1
+                """,
+                limit,
+            )
+
+    async def get_or_create_referral_code(self, telegram_id: int, seed: str) -> str:
+        user = await self.get_user(telegram_id)
+        if user is not None and user["referral_code"]:
+            return str(user["referral_code"])
+
+        base = "".join(ch for ch in seed.upper() if ch.isalnum()) or "USER"
+        candidate = f"R{base[:8]}{str(telegram_id)[-4:]}"
+        candidate = candidate[:24]
+
+        async with self.pool.acquire() as conn:
+            suffix = 0
+            while True:
+                code = candidate if suffix == 0 else f"{candidate[:20]}{suffix:04d}"[-24:]
+                try:
+                    await conn.execute(
+                        "UPDATE users SET referral_code = $1 WHERE telegram_id = $2",
+                        code,
+                        telegram_id,
+                    )
+                    row = await conn.fetchrow(
+                        "SELECT referral_code FROM users WHERE telegram_id = $1",
+                        telegram_id,
+                    )
+                    if row and row["referral_code"]:
+                        return str(row["referral_code"])
+                except asyncpg.UniqueViolationError:
+                    suffix += 1
+                    continue
+                suffix += 1
+                if suffix > 9999:
+                    raise RuntimeError("Unable to generate unique referral code")
+
+    async def get_user_by_referral_code(self, ref_code: str) -> asyncpg.Record | None:
+        code = ref_code.strip().upper()
+        if not code:
+            return None
+        async with self.pool.acquire() as conn:
+            return await conn.fetchrow(
+                "SELECT * FROM users WHERE referral_code = $1",
+                code,
+            )
+
+    async def record_referral_click(self, owner_telegram_id: int, guest_telegram_id: int, ref_code: str) -> None:
+        if owner_telegram_id == guest_telegram_id:
+            return
+        async with self.pool.acquire() as conn:
+            await conn.execute(
+                """
+                INSERT INTO referral_clicks(owner_telegram_id, guest_telegram_id, ref_code, clicked_at)
+                VALUES($1, $2, $3, NOW())
+                ON CONFLICT(guest_telegram_id) DO UPDATE SET
+                    owner_telegram_id = EXCLUDED.owner_telegram_id,
+                    ref_code = EXCLUDED.ref_code,
+                    clicked_at = NOW()
+                """,
+                owner_telegram_id,
+                guest_telegram_id,
+                ref_code.strip().upper(),
+            )
+
+    async def get_referrer_for_guest(self, guest_telegram_id: int) -> int | None:
+        async with self.pool.acquire() as conn:
+            owner = await conn.fetchval(
+                "SELECT owner_telegram_id FROM referral_clicks WHERE guest_telegram_id = $1",
+                guest_telegram_id,
+            )
+        if owner is None:
+            return None
+        return int(owner)
+
+    async def get_referral_stats(self, owner_telegram_id: int) -> dict[str, int]:
+        async with self.pool.acquire() as conn:
+            clicks = int(
+                await conn.fetchval(
+                    "SELECT COUNT(*) FROM referral_clicks WHERE owner_telegram_id = $1",
+                    owner_telegram_id,
+                )
+            )
+            pending = int(
+                await conn.fetchval(
+                    """
+                    SELECT COUNT(*)
+                    FROM users
+                    WHERE referred_by = $1 AND access_status = 'pending'
+                    """,
+                    owner_telegram_id,
+                )
+            )
+            approved = int(
+                await conn.fetchval(
+                    """
+                    SELECT COUNT(*)
+                    FROM users
+                    WHERE referred_by = $1 AND access_status = 'approved'
+                    """,
+                    owner_telegram_id,
+                )
+            )
+        return {"clicks": clicks, "pending": pending, "approved": approved}
 
     async def seed_content_if_empty(self, content: dict[str, Any]) -> None:
         async with self.pool.acquire() as conn:
@@ -496,93 +930,114 @@ class Database:
         if settings_count > 0 or links_count > 0:
             return
 
-        program = content.get("program", {}) if isinstance(content, dict) else {}
-        manager = content.get("manager_contact", {}) if isinstance(content, dict) else {}
+        payload = content if isinstance(content, dict) else {}
+        program = payload.get("program", {}) if isinstance(payload.get("program", {}), dict) else {}
+        manager = payload.get("manager_contact", {}) if isinstance(payload.get("manager_contact", {}), dict) else {}
 
         await self.upsert_content_settings(
             {
                 "program_title": str(program.get("title", "Актуальная программа саммита")),
                 "program_url": str(program.get("url", "")),
-                "manager_title": str(manager.get("title", "Написать менеджеру напрямую")),
+                "manager_title": str(manager.get("title", "Написать менеджеру")),
                 "manager_url": str(manager.get("url", "")),
-                "restricted_text": str(content.get("restricted_text", DEFAULT_RESTRICTED_TEXT)),
-                "welcome_template": str(content.get("welcome_template", DEFAULT_WELCOME_TEMPLATE)),
+                "restricted_text": str(payload.get("restricted_text", DEFAULT_RESTRICTED_TEXT)),
+                "welcome_template": str(payload.get("welcome_template", DEFAULT_WELCOME_TEMPLATE)),
+                "public_welcome_text": str(payload.get("public_welcome_text", DEFAULT_PUBLIC_WELCOME)),
+                "partner_presentation_url": str(payload.get("partner_presentation_url", "")),
+                "expert_form_url": str(payload.get("expert_form_url", "")),
+                "influencer_form_url": str(payload.get("influencer_form_url", "")),
+                "referral_prize_text": str(payload.get("referral_prize_text", "Пригласите коллег и выиграйте iPhone")),
             }
         )
 
-        useful_links = content.get(SECTION_USEFUL_LINKS, []) if isinstance(content, dict) else []
-        if isinstance(useful_links, list):
-            for idx, item in enumerate(useful_links):
-                if not isinstance(item, dict):
-                    continue
-                title = str(item.get("title", "")).strip()
-                url = str(item.get("url", "")).strip()
-                if title and url:
-                    await self.add_content_link(
-                        section=SECTION_USEFUL_LINKS,
-                        title=title,
-                        url=url,
-                        position=(idx + 1) * 10,
-                        is_active=True,
-                    )
+        section_aliases: dict[str, str] = {
+            LEGACY_SECTION_USEFUL_LINKS: SECTION_PARTNER_USEFUL_LINKS,
+            SECTION_PUBLIC_MENU_LINKS: SECTION_PUBLIC_MENU_LINKS,
+            SECTION_PARTNER_USEFUL_LINKS: SECTION_PARTNER_USEFUL_LINKS,
+            SECTION_EXPERT_USEFUL_LINKS: SECTION_EXPERT_USEFUL_LINKS,
+            SECTION_INFLUENCER_USEFUL_LINKS: SECTION_INFLUENCER_USEFUL_LINKS,
+            SECTION_PARTNER_MATERIALS: SECTION_PARTNER_MATERIALS,
+            SECTION_EXPERT_MATERIALS: SECTION_EXPERT_MATERIALS,
+            SECTION_INFLUENCER_MATERIALS: SECTION_INFLUENCER_MATERIALS,
+        }
 
-        materials = content.get(SECTION_PARTNER_MATERIALS, []) if isinstance(content, dict) else []
-        if isinstance(materials, list):
-            for idx, item in enumerate(materials):
+        for raw_key, section in section_aliases.items():
+            items = payload.get(raw_key, [])
+            if not isinstance(items, list):
+                continue
+            for idx, item in enumerate(items):
                 if not isinstance(item, dict):
                     continue
                 title = str(item.get("title", "")).strip()
                 url = str(item.get("url", "")).strip()
-                if title and url:
-                    await self.add_content_link(
-                        section=SECTION_PARTNER_MATERIALS,
-                        title=title,
-                        url=url,
-                        position=(idx + 1) * 10,
-                        is_active=True,
-                    )
+                if not title or not url:
+                    continue
+                await self.add_content_link(
+                    section=section,
+                    title=title,
+                    url=url,
+                    position=(idx + 1) * 10,
+                    is_active=True,
+                )
 
     async def get_content_bundle(self) -> dict[str, Any]:
         settings_map = await self.get_content_settings_map()
-        useful_links = await self.list_content_links(SECTION_USEFUL_LINKS, include_inactive=False)
-        partner_materials = await self.list_content_links(SECTION_PARTNER_MATERIALS, include_inactive=False)
+        links = await self.list_all_content_links(include_inactive=False)
+        grouped: dict[str, list[dict[str, str]]] = {}
+        for item in links:
+            section = str(item["section"])
+            grouped.setdefault(section, []).append(
+                {"title": str(item["title"]), "url": str(item["url"])}
+            )
 
         return {
             "program": {
                 "title": settings_map.get("program_title", "Актуальная программа саммита"),
                 "url": settings_map.get("program_url", ""),
             },
-            "useful_links": [
-                {"title": str(item["title"]), "url": str(item["url"])}
-                for item in useful_links
-            ],
-            "partner_materials": [
-                {"title": str(item["title"]), "url": str(item["url"])}
-                for item in partner_materials
-            ],
             "manager_contact": {
-                "title": settings_map.get("manager_title", "Написать менеджеру напрямую"),
+                "title": settings_map.get("manager_title", "Написать менеджеру"),
                 "url": settings_map.get("manager_url", ""),
             },
             "restricted_text": settings_map.get("restricted_text", DEFAULT_RESTRICTED_TEXT),
             "welcome_template": settings_map.get("welcome_template", DEFAULT_WELCOME_TEMPLATE),
+            "public_welcome_text": settings_map.get("public_welcome_text", DEFAULT_PUBLIC_WELCOME),
+            "partner_presentation_url": settings_map.get("partner_presentation_url", ""),
+            "expert_form_url": settings_map.get("expert_form_url", ""),
+            "influencer_form_url": settings_map.get("influencer_form_url", ""),
+            "referral_prize_text": settings_map.get("referral_prize_text", "Пригласите коллег и выиграйте iPhone"),
+            "sections": grouped,
+            SECTION_PUBLIC_MENU_LINKS: grouped.get(SECTION_PUBLIC_MENU_LINKS, []),
+            SECTION_PARTNER_USEFUL_LINKS: grouped.get(SECTION_PARTNER_USEFUL_LINKS, []),
+            SECTION_EXPERT_USEFUL_LINKS: grouped.get(SECTION_EXPERT_USEFUL_LINKS, []),
+            SECTION_INFLUENCER_USEFUL_LINKS: grouped.get(SECTION_INFLUENCER_USEFUL_LINKS, []),
+            SECTION_PARTNER_MATERIALS: grouped.get(SECTION_PARTNER_MATERIALS, []),
+            SECTION_EXPERT_MATERIALS: grouped.get(SECTION_EXPERT_MATERIALS, []),
+            SECTION_INFLUENCER_MATERIALS: grouped.get(SECTION_INFLUENCER_MATERIALS, []),
         }
 
     async def get_stats(self) -> dict[str, int]:
         async with self.pool.acquire() as conn:
             users_total = int(await conn.fetchval("SELECT COUNT(*) FROM users"))
+            pending_users = int(await conn.fetchval("SELECT COUNT(*) FROM users WHERE access_status = 'pending'"))
+            approved_users = int(await conn.fetchval("SELECT COUNT(*) FROM users WHERE access_status = 'approved'"))
+            rejected_users = int(await conn.fetchval("SELECT COUNT(*) FROM users WHERE access_status = 'rejected'"))
             codes_total = int(await conn.fetchval("SELECT COUNT(*) FROM access_codes"))
             active_codes = int(await conn.fetchval("SELECT COUNT(*) FROM access_codes WHERE is_active = TRUE"))
             broadcasts_total = int(await conn.fetchval("SELECT COUNT(*) FROM broadcasts"))
             pending_broadcasts = int(
                 await conn.fetchval("SELECT COUNT(*) FROM broadcasts WHERE sent_at IS NULL AND status = 'scheduled'")
             )
+            feedback_total = int(await conn.fetchval("SELECT COUNT(*) FROM feedback_messages"))
 
         return {
             "users_total": users_total,
+            "pending_users": pending_users,
+            "approved_users": approved_users,
+            "rejected_users": rejected_users,
             "codes_total": codes_total,
             "active_codes": active_codes,
             "broadcasts_total": broadcasts_total,
             "pending_broadcasts": pending_broadcasts,
+            "feedback_total": feedback_total,
         }
-

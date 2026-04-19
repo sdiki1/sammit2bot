@@ -11,10 +11,9 @@ def main() -> None:
         "summit_partner_bot.admin_app:create_app",
         factory=True,
         host="0.0.0.0",
-        port=8030,
+        port=settings.admin_panel_port,
     )
 
 
 if __name__ == "__main__":
     main()
-

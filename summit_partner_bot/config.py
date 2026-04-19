@@ -49,7 +49,7 @@ def load_settings() -> Settings:
         raise RuntimeError("Environment variable DATABASE_URL is required")
     content_file = Path(os.getenv("CONTENT_FILE", "data/content.json"))
     rate_limit_seconds = float(os.getenv("RATE_LIMIT_SECONDS", "0.7"))
-    summit_name = os.getenv("SUMMIT_NAME", "Саммит 2025")
+    summit_name = os.getenv("SUMMIT_NAME", "Саммит 2026")
     admin_panel_username = os.getenv("ADMIN_PANEL_USERNAME", "admin")
     admin_panel_password = os.getenv("ADMIN_PANEL_PASSWORD", "")
     if not admin_panel_password:

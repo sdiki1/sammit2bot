@@ -6,13 +6,13 @@
   <title>Summit Admin</title>
   <style>
     :root {
-      --bg: #f5f7fb;
+      --bg: #f4f7fc;
       --card: #ffffff;
-      --line: #dfe4ec;
-      --text: #1f2937;
-      --muted: #5b6474;
-      --accent: #1565d8;
-      --ok: #027a48;
+      --line: #dbe3ef;
+      --text: #1d2939;
+      --muted: #526175;
+      --accent: #1256c9;
+      --ok: #0b7a50;
       --warn: #b54708;
       --danger: #b42318;
     }
@@ -20,13 +20,13 @@
     body {
       margin: 0;
       font-family: "Segoe UI", Arial, sans-serif;
-      background: linear-gradient(180deg, #f5f7fb 0%, #edf3ff 60%, #f5f7fb 100%);
+      background: linear-gradient(180deg, #f4f7fc 0%, #edf4ff 70%, #f4f7fc 100%);
       color: var(--text);
     }
     header {
       display: flex;
-      gap: 8px;
       justify-content: space-between;
+      gap: 10px;
       align-items: center;
       padding: 16px 22px;
       border-bottom: 1px solid var(--line);
@@ -41,62 +41,25 @@
     }
     .top-actions {
       display: flex;
-      gap: 10px;
       align-items: center;
-      color: var(--muted);
+      gap: 10px;
       font-size: 14px;
+      color: var(--muted);
     }
     .btn-link {
-      display: inline-block;
-      text-decoration: none;
       color: #fff;
       background: var(--accent);
+      text-decoration: none;
       border-radius: 8px;
       padding: 8px 12px;
-      font-weight: 600;
+      font-weight: 700;
     }
     main {
-      max-width: 1320px;
-      margin: 16px auto 24px;
+      max-width: 1440px;
+      margin: 18px auto 24px;
       padding: 0 14px;
       display: grid;
       gap: 14px;
-    }
-    .flash {
-      background: #f0f9ff;
-      border: 1px solid #b9e6fe;
-      color: #1d4e89;
-      border-radius: 10px;
-      padding: 10px 12px;
-      font-weight: 600;
-    }
-    .stats {
-      display: grid;
-      gap: 10px;
-      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-    }
-    .stat {
-      border: 1px solid var(--line);
-      border-radius: 12px;
-      background: var(--card);
-      padding: 14px;
-    }
-    .stat .k {
-      color: var(--muted);
-      font-size: 13px;
-    }
-    .stat .v {
-      margin-top: 8px;
-      font-size: 26px;
-      font-weight: 700;
-    }
-    .grid-2 {
-      display: grid;
-      gap: 14px;
-      grid-template-columns: 1fr 1fr;
-    }
-    @media (max-width: 1024px) {
-      .grid-2 { grid-template-columns: 1fr; }
     }
     section {
       border: 1px solid var(--line);
@@ -104,6 +67,42 @@
       background: var(--card);
       padding: 14px;
       overflow: auto;
+    }
+    .flash {
+      background: #f0f8ff;
+      border: 1px solid #bae1ff;
+      color: #1d4c82;
+      border-radius: 10px;
+      padding: 10px 12px;
+      font-weight: 700;
+    }
+    .stats {
+      display: grid;
+      gap: 10px;
+      grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+    }
+    .stat {
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: #fff;
+      padding: 10px;
+    }
+    .stat .k {
+      color: var(--muted);
+      font-size: 12px;
+    }
+    .stat .v {
+      margin-top: 6px;
+      font-size: 24px;
+      font-weight: 700;
+    }
+    .grid-2 {
+      display: grid;
+      gap: 14px;
+      grid-template-columns: 1fr 1fr;
+    }
+    @media (max-width: 1080px) {
+      .grid-2 { grid-template-columns: 1fr; }
     }
     h2 {
       margin: 0 0 10px;
@@ -124,11 +123,8 @@
       grid-template-columns: repeat(12, minmax(0, 1fr));
       align-items: center;
     }
-    .row > * {
-      min-width: 0;
-    }
-    .c2 { grid-column: span 2; }
     .c1 { grid-column: span 1; }
+    .c2 { grid-column: span 2; }
     .c3 { grid-column: span 3; }
     .c4 { grid-column: span 4; }
     .c5 { grid-column: span 5; }
@@ -138,9 +134,9 @@
     .c9 { grid-column: span 9; }
     .c10 { grid-column: span 10; }
     .c12 { grid-column: span 12; }
-    @media (max-width: 840px) {
+    @media (max-width: 900px) {
       .row { grid-template-columns: 1fr; }
-      .c2, .c3, .c4, .c5, .c6, .c7, .c8, .c9, .c10, .c12 { grid-column: span 1; }
+      .c1, .c2, .c3, .c4, .c5, .c6, .c7, .c8, .c9, .c10, .c12 { grid-column: span 1; }
     }
     input, textarea, select {
       width: 100%;
@@ -152,11 +148,11 @@
       background: #fff;
     }
     textarea {
-      min-height: 92px;
+      min-height: 96px;
       resize: vertical;
       font-family: inherit;
     }
-    .btn {
+    button {
       border: 0;
       border-radius: 8px;
       background: var(--accent);
@@ -166,10 +162,13 @@
       cursor: pointer;
       white-space: nowrap;
     }
-    .btn.ok { background: var(--ok); }
-    .btn.warn { background: var(--warn); }
-    .btn.danger { background: var(--danger); }
-    .muted { color: var(--muted); font-size: 12px; }
+    button.ok { background: var(--ok); }
+    button.warn { background: var(--warn); }
+    button.danger { background: var(--danger); }
+    .muted {
+      color: var(--muted);
+      font-size: 12px;
+    }
     table {
       width: 100%;
       border-collapse: collapse;
@@ -181,9 +180,10 @@
       text-align: left;
       vertical-align: top;
     }
-    th { color: var(--muted); font-weight: 700; }
-    .status-ok { color: var(--ok); font-weight: 700; }
-    .status-off { color: var(--danger); font-weight: 700; }
+    th {
+      color: var(--muted);
+      font-weight: 700;
+    }
     .block {
       border: 1px solid var(--line);
       border-radius: 10px;
@@ -194,7 +194,7 @@
 </head>
 <body>
   <header>
-    <h1>Админ-панель Summit Partner</h1>
+    <h1>Админ-панель Summit 2026</h1>
     <div class="top-actions">
       <span>Событие: {{ settings.summit_name }}</span>
       <a class="btn-link" href="/logout">Выйти</a>
@@ -207,47 +207,86 @@
     {% endif %}
 
     <section class="stats">
-      <div class="stat"><div class="k">Пользователей</div><div class="v">{{ stats.users_total }}</div></div>
-      <div class="stat"><div class="k">Кодов</div><div class="v">{{ stats.codes_total }}</div></div>
-      <div class="stat"><div class="k">Активных кодов</div><div class="v">{{ stats.active_codes }}</div></div>
-      <div class="stat"><div class="k">Рассылок</div><div class="v">{{ stats.broadcasts_total }}</div></div>
+      <div class="stat"><div class="k">Пользователи</div><div class="v">{{ stats.users_total }}</div></div>
+      <div class="stat"><div class="k">Pending</div><div class="v">{{ stats.pending_users }}</div></div>
+      <div class="stat"><div class="k">Approved</div><div class="v">{{ stats.approved_users }}</div></div>
+      <div class="stat"><div class="k">Rejected</div><div class="v">{{ stats.rejected_users }}</div></div>
+      <div class="stat"><div class="k">Коды</div><div class="v">{{ stats.codes_total }}</div></div>
+      <div class="stat"><div class="k">Активные коды</div><div class="v">{{ stats.active_codes }}</div></div>
+      <div class="stat"><div class="k">Рассылки</div><div class="v">{{ stats.broadcasts_total }}</div></div>
       <div class="stat"><div class="k">Ожидают отправки</div><div class="v">{{ stats.pending_broadcasts }}</div></div>
+      <div class="stat"><div class="k">Отзывы</div><div class="v">{{ stats.feedback_total }}</div></div>
     </section>
 
     <div class="grid-2">
       <section>
+        <h2>Заявки на доступ</h2>
+        {% if pending_users %}
+          <table>
+            <thead>
+              <tr><th>Telegram</th><th>Роль</th><th>ФИО</th><th>Телефон</th><th>Компания</th><th>ИНН</th><th>Действия</th></tr>
+            </thead>
+            <tbody>
+              {% for u in pending_users %}
+                <tr>
+                  <td>{{ u.telegram_id }}</td>
+                  <td>{{ u.role }}</td>
+                  <td>{{ u.full_name or u.first_name or '-' }}</td>
+                  <td>{{ u.phone or '-' }}</td>
+                  <td>{{ u.company or '-' }}</td>
+                  <td>{{ u.inn or '-' }}</td>
+                  <td>
+                    <form method="post" action="/users/approve" class="row">
+                      <input type="hidden" name="telegram_id" value="{{ u.telegram_id }}">
+                      <button class="ok" type="submit">Approve</button>
+                    </form>
+                    <form method="post" action="/users/reject" class="row">
+                      <input type="hidden" name="telegram_id" value="{{ u.telegram_id }}">
+                      <input type="text" name="reason" placeholder="Причина" required>
+                      <button class="danger" type="submit">Reject</button>
+                    </form>
+                  </td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        {% else %}
+          <div class="muted">Нет заявок в статусе pending.</div>
+        {% endif %}
+      </section>
+
+      <section>
         <h2>Коды доступа</h2>
         <form method="post" action="/codes/add" class="row">
           <input class="c3" name="code" placeholder="Код" required>
-          <input class="c7" name="description" placeholder="Компания / комментарий">
-          <button class="btn c2" type="submit">Добавить</button>
+          <select class="c3" name="role" required>
+            {% for role in roles %}
+              <option value="{{ role }}">{{ role }}</option>
+            {% endfor %}
+          </select>
+          <input class="c4" name="description" placeholder="Компания / комментарий">
+          <button class="c2" type="submit">Добавить</button>
         </form>
-        <div class="muted">Коды используются в deep-link `/start CODE` и команде `/code`.</div>
         <table>
           <thead>
-            <tr><th>Код</th><th>Описание</th><th>Статус</th><th>Действие</th></tr>
+            <tr><th>Код</th><th>Роль</th><th>Описание</th><th>Статус</th><th>Действие</th></tr>
           </thead>
           <tbody>
             {% for c in codes %}
               <tr>
                 <td>{{ c.code }}</td>
-                <td>{{ c.description or "-" }}</td>
-                <td>
-                  {% if c.is_active %}
-                    <span class="status-ok">Активен</span>
-                  {% else %}
-                    <span class="status-off">Неактивен</span>
-                  {% endif %}
-                </td>
+                <td>{{ c.role }}</td>
+                <td>{{ c.description or '-' }}</td>
+                <td>{{ 'Активен' if c.is_active else 'Неактивен' }}</td>
                 <td>
                   <form method="post" action="/codes/status" class="row">
                     <input type="hidden" name="code" value="{{ c.code }}">
                     {% if c.is_active %}
                       <input type="hidden" name="is_active" value="0">
-                      <button class="btn danger" type="submit">Деактивировать</button>
+                      <button class="danger" type="submit">Деактивировать</button>
                     {% else %}
                       <input type="hidden" name="is_active" value="1">
-                      <button class="btn ok" type="submit">Активировать</button>
+                      <button class="ok" type="submit">Активировать</button>
                     {% endif %}
                   </form>
                 </td>
@@ -256,112 +295,110 @@
           </tbody>
         </table>
       </section>
+    </div>
 
+    <div class="grid-2">
       <section>
         <h2>Рассылки</h2>
         <form method="post" action="/broadcasts/create" class="row">
           <textarea class="c12" name="message_text" placeholder="Текст рассылки" required></textarea>
-          <input class="c3" type="number" min="0" name="delay_minutes" value="0">
-          <div class="c7 muted">`0` = сразу, иначе отложить на N минут.</div>
-          <button class="btn c2" type="submit">Создать</button>
+          <select class="c3" name="target_role" required>
+            {% for target in targets %}
+              <option value="{{ target }}">{{ target }}</option>
+            {% endfor %}
+          </select>
+          <input class="c2" type="number" min="0" name="delay_minutes" value="0">
+          <div class="c5 muted">`0` = сразу, иначе через N минут.</div>
+          <button class="c2" type="submit">Создать</button>
         </form>
         <h3>Последние рассылки</h3>
         <table>
           <thead>
-            <tr><th>ID</th><th>Статус</th><th>План</th><th>Отправлена</th><th>Текст</th></tr>
+            <tr><th>ID</th><th>Роль</th><th>Статус</th><th>План</th><th>Отправлена</th><th>Текст</th></tr>
           </thead>
           <tbody>
             {% for b in broadcasts %}
               <tr>
                 <td>{{ b.id }}</td>
+                <td>{{ b.target_role }}</td>
                 <td>{{ b.status }}</td>
-                <td>{{ b.scheduled_at or "-" }}</td>
-                <td>{{ b.sent_at or "-" }}</td>
-                <td>{{ (b.message_text or "")[:100] }}</td>
+                <td>{{ b.scheduled_at or '-' }}</td>
+                <td>{{ b.sent_at or '-' }}</td>
+                <td>{{ (b.message_text or '')[:120] }}</td>
               </tr>
             {% endfor %}
           </tbody>
         </table>
       </section>
+
+      <section>
+        <h2>Настройки контента</h2>
+        <form method="post" action="/settings/save" class="row">
+          <input class="c6" name="program_title" value="{{ settings_map.get('program_title', '') }}" placeholder="Название программы">
+          <input class="c6" name="program_url" value="{{ settings_map.get('program_url', '') }}" placeholder="URL программы">
+          <input class="c6" name="manager_title" value="{{ settings_map.get('manager_title', '') }}" placeholder="Название контакта менеджера">
+          <input class="c6" name="manager_url" value="{{ settings_map.get('manager_url', '') }}" placeholder="URL менеджера">
+          <input class="c6" name="partner_presentation_url" value="{{ settings_map.get('partner_presentation_url', '') }}" placeholder="URL презентации партнёров">
+          <input class="c6" name="expert_form_url" value="{{ settings_map.get('expert_form_url', '') }}" placeholder="URL формы экспертов">
+          <input class="c6" name="influencer_form_url" value="{{ settings_map.get('influencer_form_url', '') }}" placeholder="URL формы инфлюенсеров">
+          <input class="c6" name="referral_prize_text" value="{{ settings_map.get('referral_prize_text', '') }}" placeholder="Текст реферальной программы">
+          <textarea class="c6" name="restricted_text" placeholder="Текст ограниченного доступа">{{ settings_map.get('restricted_text', '') }}</textarea>
+          <textarea class="c6" name="welcome_template" placeholder="Шаблон приветствия приватного меню">{{ settings_map.get('welcome_template', '') }}</textarea>
+          <textarea class="c12" name="public_welcome_text" placeholder="Приветствие общего меню">{{ settings_map.get('public_welcome_text', '') }}</textarea>
+          <button class="c3" type="submit">Сохранить настройки</button>
+        </form>
+      </section>
     </div>
 
     <section>
-      <h2>Контент бота</h2>
-      <form method="post" action="/settings/save" class="row">
-        <input class="c6" name="program_title" value="{{ settings_map.get('program_title', '') }}" placeholder="Название программы">
-        <input class="c6" name="program_url" value="{{ settings_map.get('program_url', '') }}" placeholder="URL программы">
-        <input class="c6" name="manager_title" value="{{ settings_map.get('manager_title', '') }}" placeholder="Подпись контакта менеджера">
-        <input class="c6" name="manager_url" value="{{ settings_map.get('manager_url', '') }}" placeholder="URL контакта менеджера">
-        <textarea class="c6" name="restricted_text" placeholder="Текст ограничения доступа">{{ settings_map.get('restricted_text', '') }}</textarea>
-        <textarea class="c6" name="welcome_template" placeholder="Приветствие">{{ settings_map.get('welcome_template', '') }}</textarea>
-        <button class="btn c3" type="submit">Сохранить настройки</button>
+      <h2>Ссылки и материалы</h2>
+      <form method="post" action="/links/add" class="block row">
+        <select class="c3" name="section" required>
+          {% for section in sections %}
+            <option value="{{ section }}">{{ section }}</option>
+          {% endfor %}
+        </select>
+        <input class="c3" name="title" placeholder="Название" required>
+        <input class="c4" name="url" placeholder="URL или file_id:..." required>
+        <input class="c1" type="number" name="position" value="100">
+        <label class="c1"><input type="checkbox" name="is_active" checked> On</label>
+        <button class="c2" type="submit">Добавить</button>
       </form>
+
+      {% for section in sections %}
+        <h3>{{ section }}</h3>
+        {% if links_by_section.get(section) %}
+          {% for link in links_by_section.get(section) %}
+            <form method="post" action="/links/update" class="block row">
+              <input type="hidden" name="link_id" value="{{ link.id }}">
+              <select class="c3" name="section" required>
+                {% for s in sections %}
+                  <option value="{{ s }}" {% if s == link.section %}selected{% endif %}>{{ s }}</option>
+                {% endfor %}
+              </select>
+              <input class="c3" name="title" value="{{ link.title }}" required>
+              <input class="c4" name="url" value="{{ link.url }}" required>
+              <input class="c1" type="number" name="position" value="{{ link.position }}">
+              <label class="c1"><input type="checkbox" name="is_active" {% if link.is_active %}checked{% endif %}> On</label>
+              <button class="c2" type="submit">Сохранить</button>
+            </form>
+            <form method="post" action="/links/delete" class="row">
+              <input type="hidden" name="link_id" value="{{ link.id }}">
+              <button class="danger c2" type="submit">Удалить</button>
+            </form>
+          {% endfor %}
+        {% else %}
+          <div class="muted">Пусто.</div>
+        {% endif %}
+      {% endfor %}
     </section>
-
-    <div class="grid-2">
-      <section>
-        <h2>Полезные ссылки</h2>
-        <form method="post" action="/links/add" class="block">
-          <input type="hidden" name="section" value="useful_links">
-          <div class="row">
-            <input class="c4" name="title" placeholder="Название" required>
-            <input class="c6" name="url" placeholder="URL" required>
-            <input class="c2" type="number" name="position" value="100">
-            <label class="c2"><input type="checkbox" name="is_active" checked> Активна</label>
-            <button class="btn c2" type="submit">Добавить</button>
-          </div>
-        </form>
-        {% for link in useful_links %}
-          <form method="post" action="/links/update" class="block row">
-            <input type="hidden" name="link_id" value="{{ link.id }}">
-            <input class="c3" name="title" value="{{ link.title }}" required>
-            <input class="c6" name="url" value="{{ link.url }}" required>
-            <input class="c1" type="number" name="position" value="{{ link.position }}">
-            <label class="c1"><input type="checkbox" name="is_active" {% if link.is_active %}checked{% endif %}> On</label>
-            <button class="btn c1" type="submit">OK</button>
-          </form>
-          <form method="post" action="/links/delete" class="row">
-            <input type="hidden" name="link_id" value="{{ link.id }}">
-            <button class="btn danger c2" type="submit">Удалить</button>
-          </form>
-        {% endfor %}
-      </section>
-
-      <section>
-        <h2>Материалы партнёров</h2>
-        <form method="post" action="/links/add" class="block">
-          <input type="hidden" name="section" value="partner_materials">
-          <div class="row">
-            <input class="c4" name="title" placeholder="Название" required>
-            <input class="c6" name="url" placeholder="URL" required>
-            <input class="c2" type="number" name="position" value="100">
-            <label class="c2"><input type="checkbox" name="is_active" checked> Активен</label>
-            <button class="btn c2" type="submit">Добавить</button>
-          </div>
-        </form>
-        {% for link in materials %}
-          <form method="post" action="/links/update" class="block row">
-            <input type="hidden" name="link_id" value="{{ link.id }}">
-            <input class="c3" name="title" value="{{ link.title }}" required>
-            <input class="c6" name="url" value="{{ link.url }}" required>
-            <input class="c1" type="number" name="position" value="{{ link.position }}">
-            <label class="c1"><input type="checkbox" name="is_active" {% if link.is_active %}checked{% endif %}> On</label>
-            <button class="btn c1" type="submit">OK</button>
-          </form>
-          <form method="post" action="/links/delete" class="row">
-            <input type="hidden" name="link_id" value="{{ link.id }}">
-            <button class="btn danger c2" type="submit">Удалить</button>
-          </form>
-        {% endfor %}
-      </section>
-    </div>
 
     <section>
       <h2>Пользователи</h2>
       <table>
         <thead>
           <tr>
-            <th>ID</th><th>Telegram</th><th>Имя</th><th>Username</th><th>Код</th><th>Компания</th><th>Регистрация</th>
+            <th>ID</th><th>Telegram</th><th>Role</th><th>Status</th><th>Имя</th><th>Телефон</th><th>Компания</th><th>ИНН</th><th>Код</th><th>Рефкод</th><th>Реферер</th><th>Регистрация</th>
           </tr>
         </thead>
         <tbody>
@@ -369,11 +406,37 @@
             <tr>
               <td>{{ u.id }}</td>
               <td>{{ u.telegram_id }}</td>
-              <td>{{ u.first_name or "-" }}</td>
-              <td>{{ u.username or "-" }}</td>
-              <td>{{ u.access_code }}</td>
-              <td>{{ u.company or "-" }}</td>
+              <td>{{ u.role }}</td>
+              <td>{{ u.access_status }}</td>
+              <td>{{ u.full_name or u.first_name or '-' }}</td>
+              <td>{{ u.phone or '-' }}</td>
+              <td>{{ u.company or '-' }}</td>
+              <td>{{ u.inn or '-' }}</td>
+              <td>{{ u.access_code or '-' }}</td>
+              <td>{{ u.referral_code or '-' }}</td>
+              <td>{{ u.referred_by or '-' }}</td>
               <td>{{ u.registered_at }}</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </section>
+
+    <section>
+      <h2>Отзывы</h2>
+      <table>
+        <thead>
+          <tr><th>ID</th><th>Telegram</th><th>Role</th><th>Источник</th><th>Текст</th><th>Дата</th></tr>
+        </thead>
+        <tbody>
+          {% for f in feedback_items %}
+            <tr>
+              <td>{{ f.id }}</td>
+              <td>{{ f.telegram_id }}</td>
+              <td>{{ f.user_role or '-' }}</td>
+              <td>{{ f.source }}</td>
+              <td>{{ f.message_text }}</td>
+              <td>{{ f.created_at }}</td>
             </tr>
           {% endfor %}
         </tbody>
