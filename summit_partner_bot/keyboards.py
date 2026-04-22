@@ -9,21 +9,21 @@ from aiogram.types import (
 
 from summit_partner_bot.db import ROLE_EXPERT, ROLE_INFLUENCER, ROLE_PARTNER
 
-BTN_ABOUT = "О СТАММИТ26"
-BTN_BUY_TICKET = "Купить билет"
-BTN_FOR_PARTNERS = "Для партнеров"
-BTN_FOR_INFLUENCERS = "Для инфлюенсеров"
-BTN_FOR_EXPERTS = "Для экспертов"
-BTN_PROGRAM_PUBLIC = "Программа"
-BTN_SPEAKERS = "Спикеры"
-BTN_ROUTE = "Как добраться"
-BTN_FAQ = "Ответы на вопросы"
-BTN_CLINIC_BOOST = "ПРОКАЧКА клиник"
-BTN_MATCH_APP = "Приложение МЭТЧ для участников"
-BTN_CHANNEL = "Канал СТАММИТ26"
-BTN_SITE = "Сайт СТАММИТ26"
-BTN_FEEDBACK = "Оставить отзыв"
-BTN_REFERRAL = "Пригласи коллег и выиграй айфон"
+BTN_ABOUT = "ℹ️ О СТАММИТ26"
+BTN_BUY_TICKET = "🎟 Купить билет"
+BTN_FOR_PARTNERS = "🤝 Для партнеров"
+BTN_FOR_INFLUENCERS = "📣 Для инфлюенсеров"
+BTN_FOR_EXPERTS = "🎓 Для экспертов"
+BTN_PROGRAM_PUBLIC = "🗓 Программа"
+BTN_SPEAKERS = "🎤 Спикеры"
+BTN_ROUTE = "🧭 Как добраться"
+BTN_FAQ = "❓ Ответы на вопросы"
+BTN_CLINIC_BOOST = "🚀 ПРОКАЧКА клиник"
+BTN_MATCH_APP = "📱 Приложение МЭТЧ для участников"
+BTN_CHANNEL = "📢 Канал СТАММИТ26"
+BTN_SITE = "🌐 Сайт СТАММИТ26"
+BTN_FEEDBACK = "💬 Оставить отзыв"
+BTN_REFERRAL = "🎁 Пригласи коллег и выиграй айфон"
 
 PUBLIC_MENU_BUTTONS = [
     BTN_ABOUT,
@@ -48,11 +48,11 @@ BTN_PROGRAM = "📅 Программа саммита"
 BTN_LINKS = "🔗 Полезные ссылки"
 BTN_MANAGER = "🧑‍💼 Связаться с менеджером"
 BTN_MATERIALS = "📎 Материалы"
-BTN_INFLUENCER_CONDITIONS = "Условия для инфлюенсеров"
-BTN_INFLUENCER_APPLICATION = "Заявка"
+BTN_INFLUENCER_CONDITIONS = "📋 Условия для инфлюенсеров"
+BTN_INFLUENCER_APPLICATION = "📝 Заявка"
 
 BTN_BACK = "⬅️ Назад"
-BTN_CANCEL = "Отмена"
+BTN_CANCEL = "❌ Отмена"
 BTN_TO_PUBLIC_MENU = "🏠 Общее меню"
 
 

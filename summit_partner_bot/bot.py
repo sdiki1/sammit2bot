@@ -78,6 +78,7 @@ logger = logging.getLogger(__name__)
 USER_MARKER_RE = re.compile(r"#USER_(\d+)")
 REF_START_RE = re.compile(r"^ref_(.+)$", re.IGNORECASE)
 PHONE_RE = re.compile(r"^[+\d][\d\s\-()]{6,}$")
+CAPTION_PREFIX_RE = re.compile(r"^[^0-9A-Za-zА-Яа-яЁё]+")
 
 PUBLIC_LINKABLE_BUTTONS = {
     BTN_ABOUT,
@@ -175,13 +176,22 @@ def _looks_like_access_code_candidate(raw_text: str) -> bool:
     return all(ch.isalnum() or ch in {"_", "-", "."} for ch in code)
 
 
+def _normalize_caption_for_match(value: str) -> str:
+    text = (value or "").strip()
+    if not text:
+        return ""
+    text = CAPTION_PREFIX_RE.sub("", text).strip()
+    text = re.sub(r"\s+", " ", text)
+    return text.casefold()
+
+
 def _is_admin(message: Message, settings: Settings) -> bool:
     return bool(message.from_user and message.from_user.id in settings.admin_ids)
 
 
 def _format_welcome(first_name: str, summit_name: str, role: str, content: dict) -> str:
     default_template = (
-        "Добро пожаловать, {first_name}!\n"
+        "👋 Добро пожаловать, {first_name}!\n"
         "Вы авторизованы как {role_title} саммита {summit_name}.\n\n"
         "Используйте меню ниже для быстрого доступа к информации."
     )
@@ -378,7 +388,8 @@ async def _process_access_code_input(
     code = _extract_possible_code(raw_input)
     if not code:
         await message.answer(
-            "Не удалось распознать код. Отправьте код одним сообщением или ссылку `...start=КОД`.",
+            "⚠️ Не удалось распознать код.\n"
+            "Отправьте код одним сообщением или ссылку `...start=КОД`.",
             reply_markup=cancel_keyboard(),
         )
         return False
@@ -386,7 +397,7 @@ async def _process_access_code_input(
     code_row = await db.get_access_code(code)
     if code_row is None:
         await message.answer(
-            "Код не найден или неактивен.\n"
+            "🚫 Код не найден или неактивен.\n"
             "Проверьте код и отправьте ещё раз. Если не получается, запросите новый у организатора.",
             reply_markup=cancel_keyboard(),
         )
@@ -395,7 +406,7 @@ async def _process_access_code_input(
     code_role = normalize_role(str(code_row["role"]))
     if expected_role is not None and code_role != normalize_role(expected_role):
         await message.answer(
-            f"Этот код относится к роли «{role_title(code_role)}».\n"
+            f"⚠️ Этот код относится к роли «{role_title(code_role)}».\n"
             f"Для раздела «{role_title(expected_role)}» нужен другой код.",
             reply_markup=cancel_keyboard(),
         )
@@ -425,7 +436,7 @@ async def _complete_request(
 
     if not code:
         await state.clear()
-        await message.answer("Сессия истекла. Запустите /start по ссылке-приглашению заново.")
+        await message.answer("⌛ Сессия истекла. Запустите /start по ссылке-приглашению заново.")
         return
 
     referred_by = await db.get_referrer_for_guest(message.from_user.id)
@@ -518,7 +529,7 @@ async def _ensure_private_user(
     role = normalize_role(str(user_row["role"]))
     if required_role and role != normalize_role(required_role):
         await message.answer(
-            f"Этот раздел доступен только для роли: {role_title(required_role)}.",
+            f"🔒 Этот раздел доступен только для роли: {role_title(required_role)}.",
             reply_markup=private_menu_keyboard(role),
         )
         return None
@@ -529,11 +540,12 @@ def _find_public_link(content: dict, title: str) -> dict[str, str] | None:
     links = content.get(SECTION_PUBLIC_MENU_LINKS, [])
     if not isinstance(links, list):
         return None
+    target_title = _normalize_caption_for_match(title)
     for item in links:
         if not isinstance(item, dict):
             continue
         item_title = str(item.get("title", "")).strip()
-        if item_title.casefold() == title.strip().casefold():
+        if _normalize_caption_for_match(item_title) == target_title:
             url = str(item.get("url", "")).strip()
             if url:
                 return {"title": item_title, "url": url}
@@ -562,7 +574,7 @@ async def _send_public_button_link(message: Message, content_loader: ContentLoad
     item = _find_public_link(content, button_title)
     if item is None:
         await message.answer(
-            "Ссылка в этом разделе ещё не опубликована. Уточните у организатора.",
+            "⚠️ Ссылка в этом разделе ещё не опубликована. Уточните у организатора.",
             reply_markup=public_menu_keyboard(),
         )
         return False
@@ -653,7 +665,7 @@ async def create_dispatcher(
 
         if user_row is not None and str(user_row["access_status"]) == STATUS_PENDING:
             await message.answer(
-                "⏳ Ваша заявка уже отправлена и ожидает подтверждения.",
+                "⏳ Ваша заявка уже отправлена и ожидает подтверждения организатором.",
                 reply_markup=public_menu_keyboard(),
             )
             return
@@ -684,7 +696,7 @@ async def create_dispatcher(
             await state.set_state(AccessRequestFlow.waiting_access_code)
             await state.set_data({})
             await message.answer(
-                "Отправьте код приглашения одним сообщением.\n"
+                "🔐 Отправьте код приглашения одним сообщением.\n"
                 "Можно отправить сам код или ссылку вида `...start=КОД`.",
                 reply_markup=cancel_keyboard(),
             )
@@ -716,9 +728,9 @@ async def create_dispatcher(
             return
         user_row = await db.get_user(message.from_user.id)
         if user_row is not None and str(user_row["access_status"]) == STATUS_APPROVED:
-            await message.answer("Действие отменено.", reply_markup=private_menu_keyboard(str(user_row["role"])))
+            await message.answer("❌ Действие отменено.", reply_markup=private_menu_keyboard(str(user_row["role"])))
         else:
-            await message.answer("Действие отменено.", reply_markup=public_menu_keyboard())
+            await message.answer("❌ Действие отменено.", reply_markup=public_menu_keyboard())
 
     @router.message(F.text == BTN_CANCEL)
     async def cancel_any_flow_btn(message: Message, state: FSMContext) -> None:
@@ -749,37 +761,37 @@ async def create_dispatcher(
     async def request_partner_inn(message: Message, state: FSMContext) -> None:
         inn = (message.text or "").strip()
         if not inn.isdigit() or len(inn) not in (10, 12):
-            await message.answer("ИНН должен содержать 10 или 12 цифр. Попробуйте снова.")
+            await message.answer("⚠️ ИНН должен содержать 10 или 12 цифр. Попробуйте снова.")
             return
         await state.update_data(partner_inn=inn)
         await state.set_state(AccessRequestFlow.waiting_partner_company)
-        await message.answer("Введите наименование компании:")
+        await message.answer("🏢 Введите наименование компании:")
 
     @router.message(AccessRequestFlow.waiting_partner_company)
     async def request_partner_company(message: Message, state: FSMContext) -> None:
         company = (message.text or "").strip()
         if len(company) < 2:
-            await message.answer("Укажите корректное наименование компании.")
+            await message.answer("⚠️ Укажите корректное наименование компании.")
             return
         await state.update_data(partner_company=company)
         await state.set_state(AccessRequestFlow.waiting_partner_contact_name)
-        await message.answer("Введите имя контактного лица:")
+        await message.answer("👤 Введите имя контактного лица:")
 
     @router.message(AccessRequestFlow.waiting_partner_contact_name)
     async def request_partner_contact(message: Message, state: FSMContext) -> None:
         full_name = (message.text or "").strip()
         if len(full_name) < 2:
-            await message.answer("Введите имя и фамилию контактного лица.")
+            await message.answer("⚠️ Введите имя и фамилию контактного лица.")
             return
         await state.update_data(partner_contact_name=full_name)
         await state.set_state(AccessRequestFlow.waiting_partner_phone)
-        await message.answer("Введите телефон контактного лица (пример: +79991234567):")
+        await message.answer("📞 Введите телефон контактного лица (пример: +79991234567):")
 
     @router.message(AccessRequestFlow.waiting_partner_phone)
     async def request_partner_phone(message: Message, state: FSMContext) -> None:
         phone = (message.text or "").strip()
         if not PHONE_RE.match(phone):
-            await message.answer("Неверный формат телефона. Попробуйте снова.")
+            await message.answer("⚠️ Неверный формат телефона. Попробуйте снова.")
             return
         data = await state.get_data()
         await _complete_request(
@@ -798,17 +810,17 @@ async def create_dispatcher(
     async def request_name(message: Message, state: FSMContext) -> None:
         full_name = (message.text or "").strip()
         if len(full_name) < 2:
-            await message.answer("Введите корректные имя и фамилию.")
+            await message.answer("⚠️ Введите корректные имя и фамилию.")
             return
         await state.update_data(full_name=full_name)
         await state.set_state(AccessRequestFlow.waiting_phone)
-        await message.answer("Введите телефон (пример: +79991234567):")
+        await message.answer("📞 Введите телефон (пример: +79991234567):")
 
     @router.message(AccessRequestFlow.waiting_phone)
     async def request_phone(message: Message, state: FSMContext) -> None:
         phone = (message.text or "").strip()
         if not PHONE_RE.match(phone):
-            await message.answer("Неверный формат телефона. Попробуйте снова.")
+            await message.answer("⚠️ Неверный формат телефона. Попробуйте снова.")
             return
         data = await state.get_data()
         await _complete_request(
@@ -841,7 +853,7 @@ async def create_dispatcher(
         if text == BTN_REFERRAL:
             if not is_approved:
                 await message.answer(
-                    "Реферальная ссылка станет доступна после подтверждения доступа в одном из приватных разделов.",
+                    "🔐 Реферальная ссылка станет доступна после подтверждения доступа в одном из приватных разделов.",
                     reply_markup=public_menu_keyboard(),
                 )
                 return
@@ -892,7 +904,7 @@ async def create_dispatcher(
 
         text = (message.text or "").strip()
         if not text:
-            await message.answer("Отправьте текст сообщения одним сообщением.")
+            await message.answer("✍️ Отправьте текст сообщения одним сообщением.")
             return
 
         user_row = await db.get_user(message.from_user.id)
@@ -922,9 +934,9 @@ async def create_dispatcher(
 
         await state.clear()
         if user_row is not None and str(user_row["access_status"]) == STATUS_APPROVED:
-            await message.answer("Спасибо! Отзыв отправлен.", reply_markup=private_menu_keyboard(str(user_row["role"])))
+            await message.answer("✅ Спасибо! Отзыв отправлен.", reply_markup=private_menu_keyboard(str(user_row["role"])))
         else:
-            await message.answer("Спасибо! Отзыв отправлен.", reply_markup=public_menu_keyboard())
+            await message.answer("✅ Спасибо! Отзыв отправлен.", reply_markup=public_menu_keyboard())
 
     @router.message(F.text == BTN_TO_PUBLIC_MENU)
     async def go_to_public_menu(message: Message) -> None:
@@ -1028,9 +1040,9 @@ async def create_dispatcher(
 
         user_row = await db.get_user(message.from_user.id)
         if user_row is not None and str(user_row["access_status"]) == STATUS_APPROVED:
-            await message.answer("Главное меню.", reply_markup=private_menu_keyboard(str(user_row["role"])))
+            await message.answer("🏠 Главное меню.", reply_markup=private_menu_keyboard(str(user_row["role"])))
         else:
-            await message.answer("Главное меню.", reply_markup=public_menu_keyboard())
+            await message.answer("🏠 Главное меню.", reply_markup=public_menu_keyboard())
 
     @router.message(NavigationFlow.waiting_link_choice)
     async def handle_link_choice(message: Message, state: FSMContext) -> None:
@@ -1047,11 +1059,11 @@ async def create_dispatcher(
 
         target = str(links_map.get(text, "")).strip()
         if not target:
-            await message.answer("Выберите пункт из списка или нажмите «⬅️ Назад».")
+            await message.answer("⚠️ Выберите пункт из списка или нажмите «⬅️ Назад».")
             return
 
         await _send_link_or_file(message, text, target)
-        await message.answer("Выберите следующую ссылку или вернитесь назад.", reply_markup=section_keyboard(list(links_map.keys())))
+        await message.answer("👉 Выберите следующую ссылку или вернитесь назад.", reply_markup=section_keyboard(list(links_map.keys())))
 
     @router.message(NavigationFlow.waiting_material_choice)
     async def handle_material_choice(message: Message, state: FSMContext) -> None:
@@ -1067,11 +1079,11 @@ async def create_dispatcher(
 
         target = str(links_map.get(text, "")).strip()
         if not target:
-            await message.answer("Выберите пункт из списка или нажмите «⬅️ Назад».")
+            await message.answer("⚠️ Выберите пункт из списка или нажмите «⬅️ Назад».")
             return
 
         await _send_link_or_file(message, text, target)
-        await message.answer("Выберите следующий материал или вернитесь назад.", reply_markup=section_keyboard(list(links_map.keys())))
+        await message.answer("👉 Выберите следующий материал или вернитесь назад.", reply_markup=section_keyboard(list(links_map.keys())))
 
     @router.message(F.text == BTN_INFLUENCER_CONDITIONS)
     async def influencer_conditions(message: Message) -> None:
@@ -1084,12 +1096,14 @@ async def create_dispatcher(
         if item is None:
             items = _get_role_links(content, ROLE_INFLUENCER, is_materials=True)
             for candidate in items:
-                if candidate["title"].strip().casefold() == BTN_INFLUENCER_CONDITIONS.casefold():
+                if _normalize_caption_for_match(candidate["title"]) == _normalize_caption_for_match(
+                    BTN_INFLUENCER_CONDITIONS
+                ):
                     item = candidate
                     break
 
         if item is None:
-            await message.answer("Раздел с условиями пока не опубликован.")
+            await message.answer("⚠️ Раздел с условиями пока не опубликован.")
             return
 
         await _send_link_or_file(message, item["title"], item["url"])
@@ -1105,7 +1119,9 @@ async def create_dispatcher(
         if item is None:
             items = _get_role_links(content, ROLE_INFLUENCER, is_materials=True)
             for candidate in items:
-                if candidate["title"].strip().casefold() == BTN_INFLUENCER_APPLICATION.casefold():
+                if _normalize_caption_for_match(candidate["title"]) == _normalize_caption_for_match(
+                    BTN_INFLUENCER_APPLICATION
+                ):
                     item = candidate
                     break
 
@@ -1115,7 +1131,7 @@ async def create_dispatcher(
                 item = {"title": "Открыть заявку", "url": form_url}
 
         if item is None:
-            await message.answer("Раздел с заявкой пока не опубликован.")
+            await message.answer("⚠️ Раздел с заявкой пока не опубликован.")
             return
 
         await _send_link_or_file(message, item["title"], item["url"])
@@ -1165,11 +1181,11 @@ async def create_dispatcher(
 
         if not settings.support_chat_ids:
             await state.clear()
-            await message.answer(
-                "Поддержка не настроена. Обратитесь к организатору.",
-                reply_markup=private_menu_keyboard(role),
-            )
-            return
+        await message.answer(
+            "⚠️ Поддержка не настроена. Обратитесь к организатору.",
+            reply_markup=private_menu_keyboard(role),
+        )
+        return
 
         username = f"@{user_row['username']}" if user_row["username"] else "—"
         question_header = (
@@ -1204,7 +1220,7 @@ async def create_dispatcher(
             )
         else:
             await message.answer(
-                "Не удалось доставить вопрос в поддержку. Попробуйте позже.",
+                "⚠️ Не удалось доставить вопрос в поддержку. Попробуйте позже.",
                 reply_markup=private_menu_keyboard(role),
             )
 
@@ -1697,7 +1713,7 @@ async def create_dispatcher(
         user_row = await db.get_user(message.from_user.id)
         if user_row is not None and str(user_row["access_status"]) == STATUS_APPROVED:
             await message.answer(
-                "Используйте кнопки меню для навигации.",
+                "ℹ️ Используйте кнопки меню для навигации.",
                 reply_markup=private_menu_keyboard(str(user_row["role"])),
             )
             return
@@ -1717,7 +1733,7 @@ async def create_dispatcher(
                     return
 
         await message.answer(
-            "Используйте кнопки меню для навигации.\n"
+            "ℹ️ Используйте кнопки меню для навигации.\n"
             "Если у вас есть код приглашения, просто отправьте его одним сообщением.",
             reply_markup=public_menu_keyboard(),
         )
