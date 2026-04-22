@@ -10,6 +10,7 @@ class FeedbackFlow(StatesGroup):
 
 
 class AccessRequestFlow(StatesGroup):
+    waiting_access_code = State()
     waiting_partner_inn = State()
     waiting_partner_company = State()
     waiting_partner_contact_name = State()

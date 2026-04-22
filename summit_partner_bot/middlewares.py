@@ -22,6 +22,11 @@ class RateLimitMiddleware(BaseMiddleware):
         if user is None:
             return await handler(event, data)
 
+        if isinstance(event, Message):
+            text = (event.text or "").strip()
+            if text.startswith("/"):
+                return await handler(event, data)
+
         now = monotonic()
         last_seen = self._last_event_at.get(user.id, 0.0)
         if now - last_seen < self.limit_seconds:
@@ -33,4 +38,3 @@ class RateLimitMiddleware(BaseMiddleware):
 
         self._last_event_at[user.id] = now
         return await handler(event, data)
-

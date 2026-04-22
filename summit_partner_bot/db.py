@@ -282,6 +282,14 @@ class Database:
                 normalized,
             )
 
+    async def find_access_code(self, code: str) -> asyncpg.Record | None:
+        normalized = normalize_code(code)
+        async with self.pool.acquire() as conn:
+            return await conn.fetchrow(
+                "SELECT * FROM access_codes WHERE code = $1",
+                normalized,
+            )
+
     async def add_or_update_access_code(
         self,
         code: str,
@@ -313,6 +321,15 @@ class Database:
             status = await conn.execute(
                 "UPDATE access_codes SET is_active = $1 WHERE code = $2",
                 is_active,
+                normalized,
+            )
+        return _extract_rowcount(status)
+
+    async def delete_access_code(self, code: str) -> int:
+        normalized = normalize_code(code)
+        async with self.pool.acquire() as conn:
+            status = await conn.execute(
+                "DELETE FROM access_codes WHERE code = $1",
                 normalized,
             )
         return _extract_rowcount(status)

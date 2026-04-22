@@ -78,7 +78,9 @@ docker compose up -d --build
 - `/add_code CODE ROLE описание`
 - `/disable_code CODE`
 - `/enable_code CODE`
+- `/delete_code CODE`
 - `/list_codes`
+- `/check_code CODE`
 - `/pending_requests`
 - `/approve_user TELEGRAM_ID`
 - `/reject_user TELEGRAM_ID причина`

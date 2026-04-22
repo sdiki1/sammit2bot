@@ -40,6 +40,35 @@ PRESET_SECTIONS = [
     SECTION_INFLUENCER_MATERIALS,
 ]
 
+TAB_PUBLIC = "public"
+TAB_PARTNERS = "partners"
+TAB_EXPERTS = "experts"
+TAB_INFLUENCERS = "influencers"
+TAB_SYSTEM = "system"
+
+TAB_ORDER = [TAB_PUBLIC, TAB_PARTNERS, TAB_EXPERTS, TAB_INFLUENCERS, TAB_SYSTEM]
+TAB_TITLES = {
+    TAB_PUBLIC: "Публичное",
+    TAB_PARTNERS: "Партнёры",
+    TAB_EXPERTS: "Эксперты",
+    TAB_INFLUENCERS: "Инфлюенсеры",
+    TAB_SYSTEM: "Сервис",
+}
+
+TAB_ROLE = {
+    TAB_PARTNERS: ROLE_PARTNER,
+    TAB_EXPERTS: ROLE_EXPERT,
+    TAB_INFLUENCERS: ROLE_INFLUENCER,
+}
+
+TAB_SECTIONS = {
+    TAB_PUBLIC: [SECTION_PUBLIC_MENU_LINKS],
+    TAB_PARTNERS: [SECTION_PARTNER_USEFUL_LINKS, SECTION_PARTNER_MATERIALS],
+    TAB_EXPERTS: [SECTION_EXPERT_USEFUL_LINKS, SECTION_EXPERT_MATERIALS],
+    TAB_INFLUENCERS: [SECTION_INFLUENCER_USEFUL_LINKS, SECTION_INFLUENCER_MATERIALS],
+    TAB_SYSTEM: [],
+}
+
 
 def _is_authenticated(request: Request) -> bool:
     return bool(request.session.get("admin_ok"))
@@ -70,6 +99,17 @@ def _sanitize_int(value: str | None, default: int) -> int:
         return int(value)
     except ValueError:
         return default
+
+
+def _sanitize_tab(raw_value: str | None) -> str:
+    value = (raw_value or "").strip().lower()
+    if value in TAB_ORDER:
+        return value
+    return TAB_PUBLIC
+
+
+def _dashboard_url(tab: str) -> str:
+    return f"/dashboard?tab={tab}"
 
 
 def create_app() -> FastAPI:
@@ -133,10 +173,12 @@ def create_app() -> FastAPI:
         if maybe_redirect is not None:
             return maybe_redirect
 
+        active_tab = _sanitize_tab(request.query_params.get("tab"))
+
         stats = await db.get_stats()
         users = await db.list_users(limit=300)
         pending_users = await db.list_pending_users(limit=200)
-        codes = await db.list_access_codes(limit=300)
+        all_codes = await db.list_access_codes(limit=300)
         broadcasts = await db.list_broadcasts(limit=120)
         feedback_items = await db.list_feedback(limit=120)
         settings_map = await db.get_content_settings_map()
@@ -150,6 +192,18 @@ def create_app() -> FastAPI:
         dynamic_sections = await db.list_content_sections()
         sections = sorted(set(PRESET_SECTIONS + dynamic_sections))
 
+        visible_sections = TAB_SECTIONS.get(active_tab, [])
+        if active_tab == TAB_SYSTEM:
+            visible_sections = sections
+
+        role_for_tab = TAB_ROLE.get(active_tab)
+        if role_for_tab:
+            codes = [row for row in all_codes if str(row["role"]) == role_for_tab]
+        elif active_tab == TAB_PUBLIC:
+            codes = []
+        else:
+            codes = all_codes
+
         return templates.TemplateResponse(
             request=request,
             name="dashboard.html",
@@ -159,14 +213,18 @@ def create_app() -> FastAPI:
                 "users": users,
                 "pending_users": pending_users,
                 "codes": codes,
+                "all_codes": all_codes,
                 "broadcasts": broadcasts,
                 "feedback_items": feedback_items,
                 "links_by_section": links_by_section,
                 "sections": sections,
+                "visible_sections": visible_sections,
                 "settings_map": settings_map,
                 "settings": settings,
                 "roles": [ROLE_PARTNER, ROLE_EXPERT, ROLE_INFLUENCER],
                 "targets": [ROLE_ALL, ROLE_PARTNER, ROLE_EXPERT, ROLE_INFLUENCER],
+                "active_tab": active_tab,
+                "tabs": [(tab, TAB_TITLES[tab]) for tab in TAB_ORDER],
             },
         )
 
@@ -176,51 +234,71 @@ def create_app() -> FastAPI:
         code: str = Form(...),
         role: str = Form(ROLE_PARTNER),
         description: str = Form(""),
+        tab: str = Form(TAB_PUBLIC),
     ) -> RedirectResponse:
         maybe_redirect = _require_auth(request)
         if maybe_redirect is not None:
             return maybe_redirect
         await db.add_or_update_access_code(code=code, role=normalize_role(role), description=description, is_active=True)
         _set_flash(request, "Код сохранён.")
-        return _redirect("/dashboard")
+        return _redirect(_dashboard_url(_sanitize_tab(tab)))
 
     @app.post("/codes/status")
     async def set_code_status(
         request: Request,
         code: str = Form(...),
         is_active: str = Form(...),
+        tab: str = Form(TAB_PUBLIC),
     ) -> RedirectResponse:
         maybe_redirect = _require_auth(request)
         if maybe_redirect is not None:
             return maybe_redirect
         await db.set_access_code_status(code=code, is_active=(is_active == "1"))
         _set_flash(request, "Статус кода обновлён.")
-        return _redirect("/dashboard")
+        return _redirect(_dashboard_url(_sanitize_tab(tab)))
+
+    @app.post("/codes/delete")
+    async def delete_code(
+        request: Request,
+        code: str = Form(...),
+        tab: str = Form(TAB_PUBLIC),
+    ) -> RedirectResponse:
+        maybe_redirect = _require_auth(request)
+        if maybe_redirect is not None:
+            return maybe_redirect
+        deleted = await db.delete_access_code(code=code)
+        if deleted:
+            _set_flash(request, "Код удалён.")
+        else:
+            _set_flash(request, "Код не найден.")
+        return _redirect(_dashboard_url(_sanitize_tab(tab)))
 
     @app.post("/users/approve")
     async def approve_user(
         request: Request,
         telegram_id: int = Form(...),
+        tab: str = Form(TAB_PUBLIC),
     ) -> RedirectResponse:
         maybe_redirect = _require_auth(request)
         if maybe_redirect is not None:
             return maybe_redirect
         await db.approve_user(telegram_id=telegram_id, approved_by=0)
         _set_flash(request, f"Пользователь {telegram_id} подтверждён.")
-        return _redirect("/dashboard")
+        return _redirect(_dashboard_url(_sanitize_tab(tab)))
 
     @app.post("/users/reject")
     async def reject_user(
         request: Request,
         telegram_id: int = Form(...),
         reason: str = Form(""),
+        tab: str = Form(TAB_PUBLIC),
     ) -> RedirectResponse:
         maybe_redirect = _require_auth(request)
         if maybe_redirect is not None:
             return maybe_redirect
         await db.reject_user(telegram_id=telegram_id, approved_by=0, reason=reason)
         _set_flash(request, f"Пользователь {telegram_id} отклонён.")
-        return _redirect("/dashboard")
+        return _redirect(_dashboard_url(_sanitize_tab(tab)))
 
     @app.post("/links/add")
     async def add_link(
@@ -230,6 +308,7 @@ def create_app() -> FastAPI:
         url: str = Form(...),
         position: int = Form(100),
         is_active: str | None = Form(default=None),
+        tab: str = Form(TAB_PUBLIC),
     ) -> RedirectResponse:
         maybe_redirect = _require_auth(request)
         if maybe_redirect is not None:
@@ -245,7 +324,7 @@ def create_app() -> FastAPI:
             _set_flash(request, "Ссылка добавлена.")
         except ValueError:
             _set_flash(request, "Некорректная секция ссылки.")
-        return _redirect("/dashboard")
+        return _redirect(_dashboard_url(_sanitize_tab(tab)))
 
     @app.post("/links/update")
     async def update_link(
@@ -256,6 +335,7 @@ def create_app() -> FastAPI:
         url: str = Form(...),
         position: int = Form(100),
         is_active: str | None = Form(default=None),
+        tab: str = Form(TAB_PUBLIC),
     ) -> RedirectResponse:
         maybe_redirect = _require_auth(request)
         if maybe_redirect is not None:
@@ -269,19 +349,20 @@ def create_app() -> FastAPI:
             is_active=bool(is_active),
         )
         _set_flash(request, "Ссылка обновлена.")
-        return _redirect("/dashboard")
+        return _redirect(_dashboard_url(_sanitize_tab(tab)))
 
     @app.post("/links/delete")
     async def delete_link(
         request: Request,
         link_id: int = Form(...),
+        tab: str = Form(TAB_PUBLIC),
     ) -> RedirectResponse:
         maybe_redirect = _require_auth(request)
         if maybe_redirect is not None:
             return maybe_redirect
         await db.delete_content_link(link_id)
         _set_flash(request, "Ссылка удалена.")
-        return _redirect("/dashboard")
+        return _redirect(_dashboard_url(_sanitize_tab(tab)))
 
     @app.post("/settings/save")
     async def save_settings(
@@ -297,6 +378,7 @@ def create_app() -> FastAPI:
         expert_form_url: str = Form(""),
         influencer_form_url: str = Form(""),
         referral_prize_text: str = Form(""),
+        tab: str = Form(TAB_PUBLIC),
     ) -> RedirectResponse:
         maybe_redirect = _require_auth(request)
         if maybe_redirect is not None:
@@ -317,7 +399,7 @@ def create_app() -> FastAPI:
             }
         )
         _set_flash(request, "Настройки сохранены.")
-        return _redirect("/dashboard")
+        return _redirect(_dashboard_url(_sanitize_tab(tab)))
 
     @app.post("/broadcasts/create")
     async def create_broadcast(
@@ -325,6 +407,7 @@ def create_app() -> FastAPI:
         message_text: str = Form(...),
         target_role: str = Form(ROLE_ALL),
         delay_minutes: str | None = Form(default="0"),
+        tab: str = Form(TAB_PUBLIC),
     ) -> RedirectResponse:
         maybe_redirect = _require_auth(request)
         if maybe_redirect is not None:
@@ -333,7 +416,7 @@ def create_app() -> FastAPI:
         text = message_text.strip()
         if not text:
             _set_flash(request, "Текст рассылки не может быть пустым.")
-            return _redirect("/dashboard")
+            return _redirect(_dashboard_url(_sanitize_tab(tab)))
 
         minutes = max(_sanitize_int(delay_minutes, 0), 0)
         scheduled_at = datetime.now(timezone.utc) + timedelta(minutes=minutes)
@@ -351,6 +434,6 @@ def create_app() -> FastAPI:
             _set_flash(request, "Рассылка создана и будет отправлена в ближайший цикл планировщика.")
         else:
             _set_flash(request, f"Рассылка запланирована через {minutes} мин.")
-        return _redirect("/dashboard")
+        return _redirect(_dashboard_url(_sanitize_tab(tab)))
 
     return app

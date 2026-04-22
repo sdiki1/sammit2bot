@@ -5,6 +5,7 @@ import io
 import logging
 import re
 from datetime import datetime, timedelta, timezone
+from urllib.parse import parse_qs, urlparse
 
 from aiogram import Bot, Dispatcher, F, Router
 from aiogram.exceptions import TelegramForbiddenError
@@ -97,12 +98,81 @@ ROLE_ENTRY_BUTTONS = {
     BTN_FOR_INFLUENCERS: ROLE_INFLUENCER,
 }
 
+ALL_MAIN_BUTTONS = set(PUBLIC_MENU_BUTTONS) | {
+    BTN_NEWS,
+    BTN_PROGRAM,
+    BTN_LINKS,
+    BTN_MATERIALS,
+    BTN_MANAGER,
+    BTN_INFLUENCER_CONDITIONS,
+    BTN_INFLUENCER_APPLICATION,
+    BTN_BACK,
+    BTN_CANCEL,
+    BTN_TO_PUBLIC_MENU,
+}
+
 
 def _extract_command_payload(text: str) -> str:
     parts = text.split(maxsplit=1)
     if len(parts) < 2:
         return ""
     return parts[1].strip()
+
+
+def _extract_possible_code(raw_text: str) -> str:
+    text = raw_text.strip()
+    if not text:
+        return ""
+
+    lowered = text.lower()
+    if "start=" in lowered:
+        _, _, chunk = lowered.partition("start=")
+        if chunk:
+            original_tail = text[-len(chunk):]
+            text = original_tail.strip()
+
+    if text.startswith("http://") or text.startswith("https://") or "t.me/" in text:
+        url_value = text if text.startswith(("http://", "https://")) else f"https://{text.lstrip('/')}"
+        try:
+            parsed = urlparse(url_value)
+            query = parse_qs(parsed.query)
+            start_value = (
+                query.get("start", [None])[0]
+                or query.get("startapp", [None])[0]
+                or query.get("code", [None])[0]
+            )
+            if start_value:
+                text = str(start_value).strip()
+        except Exception:  # noqa: BLE001
+            pass
+
+    if text.startswith("/"):
+        parts = text.split(maxsplit=1)
+        if len(parts) == 1:
+            return ""
+        text = parts[1].strip()
+
+    text = text.split("&", maxsplit=1)[0]
+    text = text.split("#", maxsplit=1)[0]
+
+    text = text.strip(" \t\n\r'\"`.,;:!?()[]{}<>")
+    if not text:
+        return ""
+    text = text.split()[0].strip()
+    if not text:
+        return ""
+    return normalize_code(text)
+
+
+def _looks_like_access_code_candidate(raw_text: str) -> bool:
+    code = _extract_possible_code(raw_text)
+    if not code:
+        return False
+    if code.startswith("REF_"):
+        return False
+    if len(code) < 4 or len(code) > 64:
+        return False
+    return all(ch.isalnum() or ch in {"_", "-", "."} for ch in code)
 
 
 def _is_admin(message: Message, settings: Settings) -> bool:
@@ -194,6 +264,9 @@ async def _send_link_or_file(message: Message, title: str, value: str) -> None:
 async def _show_public_menu(message: Message, content_loader: ContentLoader) -> None:
     content = await content_loader.load()
     text = str(content.get("public_welcome_text", "Добро пожаловать!"))
+    hint = "\n\n🔐 Для приватных разделов нажмите нужную роль и отправьте код приглашения."
+    if "код" not in text.lower():
+        text += hint
     await message.answer(text, reply_markup=public_menu_keyboard())
 
 
@@ -293,6 +366,43 @@ async def _start_access_flow(message: Message, state: FSMContext, code_row: dict
         "Введите ваше имя и фамилию:",
         reply_markup=cancel_keyboard(),
     )
+
+
+async def _process_access_code_input(
+    message: Message,
+    state: FSMContext,
+    db: Database,
+    raw_input: str,
+    expected_role: str | None = None,
+) -> bool:
+    code = _extract_possible_code(raw_input)
+    if not code:
+        await message.answer(
+            "Не удалось распознать код. Отправьте код одним сообщением или ссылку `...start=КОД`.",
+            reply_markup=cancel_keyboard(),
+        )
+        return False
+
+    code_row = await db.get_access_code(code)
+    if code_row is None:
+        await message.answer(
+            "Код не найден или неактивен.\n"
+            "Проверьте код и отправьте ещё раз. Если не получается, запросите новый у организатора.",
+            reply_markup=cancel_keyboard(),
+        )
+        return False
+
+    code_role = normalize_role(str(code_row["role"]))
+    if expected_role is not None and code_role != normalize_role(expected_role):
+        await message.answer(
+            f"Этот код относится к роли «{role_title(code_role)}».\n"
+            f"Для раздела «{role_title(expected_role)}» нужен другой код.",
+            reply_markup=cancel_keyboard(),
+        )
+        return False
+
+    await _start_access_flow(message, state, code_row)
+    return True
 
 
 async def _complete_request(
@@ -494,7 +604,8 @@ async def create_dispatcher(
 
         user_id = message.from_user.id
         text = message.text or ""
-        payload = _extract_command_payload(text)
+        raw_payload = _extract_command_payload(text)
+        payload = _extract_possible_code(raw_payload)
 
         user_row = await db.get_user(user_id)
         if user_row is not None:
@@ -504,7 +615,7 @@ async def create_dispatcher(
                 first_name=message.from_user.first_name,
             )
 
-        ref_match = REF_START_RE.match(payload)
+        ref_match = REF_START_RE.match(raw_payload)
         if ref_match:
             ref_code = ref_match.group(1).strip().upper()
             owner = await db.get_user_by_referral_code(ref_code)
@@ -527,12 +638,17 @@ async def create_dispatcher(
             return
 
         if payload:
-            code_row = await db.get_access_code(payload)
-            if code_row is None:
-                await _deny_access(message, content_loader)
-                await _show_public_menu(message, content_loader)
+            ok = await _process_access_code_input(
+                message=message,
+                state=state,
+                db=db,
+                raw_input=payload,
+                expected_role=None,
+            )
+            if ok:
                 return
-            await _start_access_flow(message, state, code_row)
+            await state.set_state(AccessRequestFlow.waiting_access_code)
+            await state.set_data({})
             return
 
         if user_row is not None and str(user_row["access_status"]) == STATUS_PENDING:
@@ -565,16 +681,22 @@ async def create_dispatcher(
 
         payload = _extract_command_payload(message.text or "")
         if not payload:
-            await message.answer("Формат команды: /code ВАШ_КОД")
+            await state.set_state(AccessRequestFlow.waiting_access_code)
+            await state.set_data({})
+            await message.answer(
+                "Отправьте код приглашения одним сообщением.\n"
+                "Можно отправить сам код или ссылку вида `...start=КОД`.",
+                reply_markup=cancel_keyboard(),
+            )
             return
 
-        code = normalize_code(payload.split()[0])
-        code_row = await db.get_access_code(code)
-        if code_row is None:
-            await message.answer("Код не найден или неактивен.")
-            return
-
-        await _start_access_flow(message, state, code_row)
+        await _process_access_code_input(
+            message=message,
+            state=state,
+            db=db,
+            raw_input=payload,
+            expected_role=None,
+        )
 
     @router.message(Command("menu"))
     async def cmd_menu(message: Message) -> None:
@@ -601,6 +723,27 @@ async def create_dispatcher(
     @router.message(F.text == BTN_CANCEL)
     async def cancel_any_flow_btn(message: Message, state: FSMContext) -> None:
         await cancel_any_flow(message, state)
+
+    @router.message(AccessRequestFlow.waiting_access_code)
+    async def request_access_code(message: Message, state: FSMContext) -> None:
+        raw_text = (message.text or "").strip()
+        if raw_text in PUBLIC_MENU_BUTTONS:
+            await state.clear()
+            await _show_public_menu(message, content_loader)
+            return
+
+        data = await state.get_data()
+        expected_role: str | None = None
+        if data.get("entry_role"):
+            expected_role = normalize_role(str(data["entry_role"]))
+
+        await _process_access_code_input(
+            message=message,
+            state=state,
+            db=db,
+            raw_input=raw_text,
+            expected_role=expected_role,
+        )
 
     @router.message(AccessRequestFlow.waiting_partner_inn)
     async def request_partner_inn(message: Message, state: FSMContext) -> None:
@@ -727,8 +870,13 @@ async def create_dispatcher(
                 await _show_private_menu(message, db, settings, content_loader)
                 return
 
-            await _deny_access(message, content_loader)
-            await _send_public_button_link(message, content_loader, text)
+            await state.set_state(AccessRequestFlow.waiting_access_code)
+            await state.set_data({"entry_role": role})
+            await message.answer(
+                f"🔐 Введите код приглашения для роли «{role_title(role)}».\n"
+                "Можно отправить код одним сообщением без команды.",
+                reply_markup=cancel_keyboard(),
+            )
             return
 
         if text in PUBLIC_LINKABLE_BUTTONS:
@@ -1193,6 +1341,17 @@ async def create_dispatcher(
         count = await db.set_access_code_status(payload.split()[0], is_active=True)
         await message.answer("Код активирован." if count else "Код не найден.")
 
+    @router.message(Command("delete_code"))
+    async def admin_delete_code(message: Message) -> None:
+        if not _is_admin(message, settings):
+            return
+        payload = _extract_command_payload(message.text or "")
+        if not payload:
+            await message.answer("Формат: /delete_code CODE")
+            return
+        count = await db.delete_access_code(payload.split()[0])
+        await message.answer("Код удалён." if count else "Код не найден.")
+
     @router.message(Command("list_codes"))
     async def admin_list_codes(message: Message) -> None:
         if not _is_admin(message, settings):
@@ -1212,6 +1371,30 @@ async def create_dispatcher(
         if len(text) > 3900:
             text = text[:3890] + "\n..."
         await message.answer(text)
+
+    @router.message(Command("check_code"))
+    async def admin_check_code(message: Message) -> None:
+        if not _is_admin(message, settings):
+            return
+        payload = _extract_command_payload(message.text or "")
+        if not payload:
+            await message.answer("Формат: /check_code CODE")
+            return
+
+        code = payload.split()[0]
+        row = await db.find_access_code(code)
+        if row is None:
+            await message.answer("Код не найден в базе.")
+            return
+
+        await message.answer(
+            "Проверка кода:\n"
+            f"Код: {row['code']}\n"
+            f"Роль: {row['role']}\n"
+            f"Активен: {'да' if row['is_active'] else 'нет'}\n"
+            f"Описание: {row['description'] or '—'}\n"
+            f"Создан: {row['created_at']}"
+        )
 
     @router.message(Command("save_link"))
     async def admin_save_link(message: Message) -> None:
@@ -1503,7 +1686,7 @@ async def create_dispatcher(
             await message.reply("Не удалось отправить ответ пользователю.")
 
     @router.message()
-    async def fallback(message: Message) -> None:
+    async def fallback(message: Message, state: FSMContext) -> None:
         if message.chat.id in settings.support_chat_ids:
             return
 
@@ -1519,8 +1702,23 @@ async def create_dispatcher(
             )
             return
 
+        current_state = await state.get_state()
+        raw_text = (message.text or "").strip()
+        if current_state is None and raw_text and raw_text not in ALL_MAIN_BUTTONS:
+            if _looks_like_access_code_candidate(raw_text):
+                ok = await _process_access_code_input(
+                    message=message,
+                    state=state,
+                    db=db,
+                    raw_input=raw_text,
+                    expected_role=None,
+                )
+                if ok:
+                    return
+
         await message.answer(
-            "Используйте кнопки меню для навигации.",
+            "Используйте кнопки меню для навигации.\n"
+            "Если у вас есть код приглашения, просто отправьте его одним сообщением.",
             reply_markup=public_menu_keyboard(),
         )
 
