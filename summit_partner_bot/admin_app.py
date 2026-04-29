@@ -3,8 +3,9 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
-from fastapi import FastAPI, Form, Request
+from fastapi import FastAPI, File, Form, Request, UploadFile
 from fastapi.responses import RedirectResponse
 from fastapi.templating import Jinja2Templates
 from starlette.middleware.sessions import SessionMiddleware
@@ -110,6 +111,25 @@ def _sanitize_tab(raw_value: str | None) -> str:
 
 def _dashboard_url(tab: str) -> str:
     return f"/dashboard?tab={tab}"
+
+
+def _broadcast_uploads_dir(content_file: Path) -> Path:
+    return content_file.resolve().parent / "uploads" / "broadcasts"
+
+
+def _guess_upload_suffix(upload: UploadFile) -> str:
+    suffix = Path(upload.filename or "").suffix.lower()
+    if suffix in {".jpg", ".jpeg", ".png", ".webp"}:
+        return suffix
+
+    content_type = (upload.content_type or "").lower()
+    if content_type == "image/jpeg":
+        return ".jpg"
+    if content_type == "image/png":
+        return ".png"
+    if content_type == "image/webp":
+        return ".webp"
+    return ""
 
 
 def create_app() -> FastAPI:
@@ -371,6 +391,12 @@ def create_app() -> FastAPI:
         program_url: str = Form(""),
         manager_title: str = Form(""),
         manager_url: str = Form(""),
+        manager_title_partner: str = Form(""),
+        manager_url_partner: str = Form(""),
+        manager_title_expert: str = Form(""),
+        manager_url_expert: str = Form(""),
+        manager_title_influencer: str = Form(""),
+        manager_url_influencer: str = Form(""),
         restricted_text: str = Form(""),
         welcome_template: str = Form(""),
         public_welcome_text: str = Form(""),
@@ -389,6 +415,12 @@ def create_app() -> FastAPI:
                 "program_url": program_url.strip(),
                 "manager_title": manager_title.strip(),
                 "manager_url": manager_url.strip(),
+                "manager_title_partner": manager_title_partner.strip(),
+                "manager_url_partner": manager_url_partner.strip(),
+                "manager_title_expert": manager_title_expert.strip(),
+                "manager_url_expert": manager_url_expert.strip(),
+                "manager_title_influencer": manager_title_influencer.strip(),
+                "manager_url_influencer": manager_url_influencer.strip(),
                 "restricted_text": restricted_text.strip(),
                 "welcome_template": welcome_template.strip(),
                 "public_welcome_text": public_welcome_text.strip(),
@@ -404,9 +436,10 @@ def create_app() -> FastAPI:
     @app.post("/broadcasts/create")
     async def create_broadcast(
         request: Request,
-        message_text: str = Form(...),
+        message_text: str = Form(""),
         target_role: str = Form(ROLE_ALL),
         delay_minutes: str | None = Form(default="0"),
+        broadcast_image: UploadFile | None = File(default=None),
         tab: str = Form(TAB_PUBLIC),
     ) -> RedirectResponse:
         maybe_redirect = _require_auth(request)
@@ -414,8 +447,26 @@ def create_app() -> FastAPI:
             return maybe_redirect
 
         text = message_text.strip()
-        if not text:
-            _set_flash(request, "Текст рассылки не может быть пустым.")
+        image_path: str | None = None
+        if broadcast_image is not None and (broadcast_image.filename or "").strip():
+            content_type = (broadcast_image.content_type or "").lower()
+            if not content_type.startswith("image/"):
+                _set_flash(request, "Можно загружать только изображения.")
+                return _redirect(_dashboard_url(_sanitize_tab(tab)))
+
+            suffix = _guess_upload_suffix(broadcast_image)
+            if not suffix:
+                _set_flash(request, "Поддерживаются JPG, PNG и WEBP.")
+                return _redirect(_dashboard_url(_sanitize_tab(tab)))
+
+            uploads_dir = _broadcast_uploads_dir(settings.content_file)
+            uploads_dir.mkdir(parents=True, exist_ok=True)
+            file_path = uploads_dir / f"{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}_{uuid4().hex}{suffix}"
+            file_path.write_bytes(await broadcast_image.read())
+            image_path = str(file_path)
+
+        if not text and not image_path:
+            _set_flash(request, "Укажите текст рассылки или добавьте изображение.")
             return _redirect(_dashboard_url(_sanitize_tab(tab)))
 
         minutes = max(_sanitize_int(delay_minutes, 0), 0)
@@ -424,7 +475,8 @@ def create_app() -> FastAPI:
         await db.create_broadcast(
             created_by=0,
             target_role=normalize_target_role(target_role),
-            message_text=text,
+            message_text=text or None,
+            image_path=image_path,
             source_chat_id=None,
             source_message_id=None,
             scheduled_at=scheduled_at,

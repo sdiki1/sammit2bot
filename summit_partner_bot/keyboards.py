@@ -56,35 +56,25 @@ BTN_CANCEL = "❌ Отмена"
 BTN_TO_PUBLIC_MENU = "🏠 Общее меню"
 
 
+def _chunk_buttons(items: list[str], width: int = 2) -> list[list[KeyboardButton]]:
+    rows: list[list[KeyboardButton]] = []
+    for idx in range(0, len(items), width):
+        rows.append([KeyboardButton(text=item) for item in items[idx : idx + width]])
+    return rows
+
+
 def public_menu_keyboard() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
-        keyboard=[
-            [KeyboardButton(text=BTN_ABOUT), KeyboardButton(text=BTN_BUY_TICKET)],
-            [KeyboardButton(text=BTN_FOR_PARTNERS), KeyboardButton(text=BTN_FOR_INFLUENCERS)],
-            [KeyboardButton(text=BTN_FOR_EXPERTS), KeyboardButton(text=BTN_PROGRAM_PUBLIC)],
-            [KeyboardButton(text=BTN_SPEAKERS), KeyboardButton(text=BTN_ROUTE)],
-            [KeyboardButton(text=BTN_FAQ), KeyboardButton(text=BTN_CLINIC_BOOST)],
-            [KeyboardButton(text=BTN_MATCH_APP), KeyboardButton(text=BTN_CHANNEL)],
-            [KeyboardButton(text=BTN_SITE), KeyboardButton(text=BTN_FEEDBACK)],
-            [KeyboardButton(text=BTN_REFERRAL)],
-        ],
+        keyboard=_chunk_buttons(PUBLIC_MENU_BUTTONS),
         resize_keyboard=True,
     )
 
 
 def private_menu_keyboard(role: str) -> ReplyKeyboardMarkup:
-    rows = [
-        [KeyboardButton(text=BTN_NEWS), KeyboardButton(text=BTN_PROGRAM)],
-        [KeyboardButton(text=BTN_LINKS), KeyboardButton(text=BTN_MATERIALS)],
-    ]
+    rows = _chunk_buttons([BTN_NEWS, BTN_PROGRAM, BTN_LINKS, BTN_MATERIALS])
 
     if role == ROLE_INFLUENCER:
-        rows.append(
-            [
-                KeyboardButton(text=BTN_INFLUENCER_CONDITIONS),
-                KeyboardButton(text=BTN_INFLUENCER_APPLICATION),
-            ]
-        )
+        rows.extend(_chunk_buttons([BTN_INFLUENCER_CONDITIONS, BTN_INFLUENCER_APPLICATION]))
 
     rows.append([KeyboardButton(text=BTN_MANAGER), KeyboardButton(text=BTN_TO_PUBLIC_MENU)])
 

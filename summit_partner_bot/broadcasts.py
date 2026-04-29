@@ -7,6 +7,7 @@ from typing import Any
 
 from aiogram import Bot
 from aiogram.exceptions import TelegramForbiddenError, TelegramRetryAfter
+from aiogram.types import FSInputFile
 
 from summit_partner_bot.db import Database, normalize_target_role
 
@@ -35,6 +36,7 @@ async def send_broadcast(bot: Bot, db: Database, broadcast_id: int) -> tuple[int
         return (0, 0)
 
     message_text = broadcast["message_text"]
+    image_path = broadcast["image_path"]
     source_chat_id = broadcast["source_chat_id"]
     source_message_id = broadcast["source_message_id"]
 
@@ -48,6 +50,12 @@ async def send_broadcast(bot: Bot, db: Database, broadcast_id: int) -> tuple[int
                     chat_id=user_id,
                     from_chat_id=source_chat_id,
                     message_id=source_message_id,
+                )
+            elif image_path:
+                await bot.send_photo(
+                    user_id,
+                    photo=FSInputFile(str(image_path)),
+                    caption=message_text or None,
                 )
             elif message_text:
                 await bot.send_message(user_id, message_text)
@@ -68,6 +76,12 @@ async def send_broadcast(bot: Bot, db: Database, broadcast_id: int) -> tuple[int
                         chat_id=user_id,
                         from_chat_id=source_chat_id,
                         message_id=source_message_id,
+                    )
+                elif image_path:
+                    await bot.send_photo(
+                        user_id,
+                        photo=FSInputFile(str(image_path)),
+                        caption=message_text or None,
                     )
                 elif message_text:
                     await bot.send_message(user_id, message_text)

@@ -236,6 +236,26 @@ def _group_links_by_title(items: list[dict[str, str]]) -> dict[str, str]:
     return result
 
 
+def _get_manager_contact(content: dict[str, object], role: str) -> dict[str, str]:
+    contacts = content.get("manager_contacts", {})
+    if isinstance(contacts, dict):
+        candidate = contacts.get(role, {})
+        if isinstance(candidate, dict):
+            title = str(candidate.get("title", "")).strip()
+            url = str(candidate.get("url", "")).strip()
+            if title and url:
+                return {"title": title, "url": url}
+
+    fallback = content.get("manager_contact", {})
+    if isinstance(fallback, dict):
+        title = str(fallback.get("title", "")).strip()
+        url = str(fallback.get("url", "")).strip()
+        if title and url:
+            return {"title": title, "url": url}
+
+    return {}
+
+
 def _parse_broadcast_target(payload: str) -> tuple[str, str]:
     text = payload.strip()
     if not text:
@@ -1155,8 +1175,8 @@ async def create_dispatcher(
             return
 
         content = await content_loader.load()
-        manager = content.get("manager_contact", {})
-        if isinstance(manager, dict) and manager.get("url"):
+        manager = _get_manager_contact(content, role)
+        if manager.get("url"):
             await message.answer(
                 "🧑‍💼 Поддержка работает через прямой контакт:",
                 reply_markup=url_keyboard([manager]),
@@ -1557,6 +1577,7 @@ async def create_dispatcher(
             created_by=message.from_user.id,
             target_role=target_role,
             message_text=text_payload or None,
+            image_path=None,
             source_chat_id=source_chat_id,
             source_message_id=source_message_id,
             scheduled_at=None,
@@ -1621,6 +1642,7 @@ async def create_dispatcher(
             created_by=message.from_user.id,
             target_role=role,
             message_text=payload or None,
+            image_path=None,
             source_chat_id=source_chat_id,
             source_message_id=source_message_id,
             scheduled_at=run_at.isoformat(),

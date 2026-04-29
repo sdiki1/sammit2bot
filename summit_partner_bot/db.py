@@ -150,6 +150,7 @@ class Database:
                     created_by BIGINT NOT NULL,
                     target_role TEXT NOT NULL DEFAULT 'all',
                     message_text TEXT,
+                    image_path TEXT,
                     source_chat_id BIGINT,
                     source_message_id BIGINT,
                     scheduled_at TIMESTAMPTZ,
@@ -222,6 +223,7 @@ class Database:
 
             await conn.execute("ALTER TABLE access_codes ADD COLUMN IF NOT EXISTS role TEXT")
             await conn.execute("ALTER TABLE broadcasts ADD COLUMN IF NOT EXISTS target_role TEXT")
+            await conn.execute("ALTER TABLE broadcasts ADD COLUMN IF NOT EXISTS image_path TEXT")
 
             await conn.execute("UPDATE users SET role = COALESCE(NULLIF(role, ''), 'partner')")
             await conn.execute("UPDATE users SET access_status = COALESCE(NULLIF(access_status, ''), 'approved')")
@@ -507,6 +509,7 @@ class Database:
         self,
         created_by: int,
         message_text: str | None,
+        image_path: str | None,
         source_chat_id: int | None,
         source_message_id: int | None,
         scheduled_at: datetime | str | None,
@@ -522,17 +525,19 @@ class Database:
                     created_by,
                     target_role,
                     message_text,
+                    image_path,
                     source_chat_id,
                     source_message_id,
                     scheduled_at,
                     status
                 )
-                VALUES($1, $2, $3, $4, $5, $6, $7)
+                VALUES($1, $2, $3, $4, $5, $6, $7, $8)
                 RETURNING id
                 """,
                 created_by,
                 role,
                 message_text,
+                image_path,
                 source_chat_id,
                 source_message_id,
                 scheduled_dt,
@@ -597,7 +602,7 @@ class Database:
         async with self.pool.acquire() as conn:
             return await conn.fetch(
                 """
-                SELECT id, created_by, target_role, message_text, scheduled_at, sent_at, status
+                SELECT id, created_by, target_role, message_text, image_path, scheduled_at, sent_at, status
                 FROM broadcasts
                 ORDER BY id DESC
                 LIMIT $1
@@ -950,6 +955,13 @@ class Database:
         payload = content if isinstance(content, dict) else {}
         program = payload.get("program", {}) if isinstance(payload.get("program", {}), dict) else {}
         manager = payload.get("manager_contact", {}) if isinstance(payload.get("manager_contact", {}), dict) else {}
+        manager_contacts = payload.get("manager_contacts", {}) if isinstance(payload.get("manager_contacts", {}), dict) else {}
+
+        def manager_for(role: str) -> dict[str, Any]:
+            raw = manager_contacts.get(role, {})
+            if isinstance(raw, dict):
+                return raw
+            return {}
 
         await self.upsert_content_settings(
             {
@@ -957,6 +969,12 @@ class Database:
                 "program_url": str(program.get("url", "")),
                 "manager_title": str(manager.get("title", "Написать менеджеру")),
                 "manager_url": str(manager.get("url", "")),
+                "manager_title_partner": str(manager_for(ROLE_PARTNER).get("title", manager.get("title", "Написать менеджеру"))),
+                "manager_url_partner": str(manager_for(ROLE_PARTNER).get("url", manager.get("url", ""))),
+                "manager_title_expert": str(manager_for(ROLE_EXPERT).get("title", manager.get("title", "Написать менеджеру"))),
+                "manager_url_expert": str(manager_for(ROLE_EXPERT).get("url", manager.get("url", ""))),
+                "manager_title_influencer": str(manager_for(ROLE_INFLUENCER).get("title", manager.get("title", "Написать менеджеру"))),
+                "manager_url_influencer": str(manager_for(ROLE_INFLUENCER).get("url", manager.get("url", ""))),
                 "restricted_text": str(payload.get("restricted_text", DEFAULT_RESTRICTED_TEXT)),
                 "welcome_template": str(payload.get("welcome_template", DEFAULT_WELCOME_TEMPLATE)),
                 "public_welcome_text": str(payload.get("public_welcome_text", DEFAULT_PUBLIC_WELCOME)),
@@ -1007,14 +1025,31 @@ class Database:
                 {"title": str(item["title"]), "url": str(item["url"])}
             )
 
+        manager_title = settings_map.get("manager_title", "Написать менеджеру")
+        manager_url = settings_map.get("manager_url", "")
+
         return {
             "program": {
                 "title": settings_map.get("program_title", "Актуальная программа саммита"),
                 "url": settings_map.get("program_url", ""),
             },
             "manager_contact": {
-                "title": settings_map.get("manager_title", "Написать менеджеру"),
-                "url": settings_map.get("manager_url", ""),
+                "title": manager_title,
+                "url": manager_url,
+            },
+            "manager_contacts": {
+                ROLE_PARTNER: {
+                    "title": settings_map.get("manager_title_partner", manager_title),
+                    "url": settings_map.get("manager_url_partner", manager_url),
+                },
+                ROLE_EXPERT: {
+                    "title": settings_map.get("manager_title_expert", manager_title),
+                    "url": settings_map.get("manager_url_expert", manager_url),
+                },
+                ROLE_INFLUENCER: {
+                    "title": settings_map.get("manager_title_influencer", manager_title),
+                    "url": settings_map.get("manager_url_influencer", manager_url),
+                },
             },
             "restricted_text": settings_map.get("restricted_text", DEFAULT_RESTRICTED_TEXT),
             "welcome_template": settings_map.get("welcome_template", DEFAULT_WELCOME_TEMPLATE),
