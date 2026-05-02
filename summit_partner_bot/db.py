@@ -150,8 +150,11 @@ class Database:
                     access_code TEXT,
                     full_name TEXT,
                     phone TEXT,
+                    email TEXT,
                     company TEXT,
                     inn TEXT,
+                    consent_accepted BOOLEAN NOT NULL DEFAULT FALSE,
+                    consent_accepted_at TIMESTAMPTZ,
                     requested_at TIMESTAMPTZ,
                     approved_at TIMESTAMPTZ,
                     approved_by BIGINT,
@@ -190,6 +193,7 @@ class Database:
                     telegram_id BIGINT NOT NULL,
                     status TEXT NOT NULL,
                     error_text TEXT,
+                    delivered_message_id BIGINT,
                     delivered_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
                 );
 
@@ -222,6 +226,7 @@ class Database:
                     booth_number TEXT,
                     full_name TEXT,
                     phone TEXT,
+                    email TEXT,
                     company TEXT,
                     inn TEXT,
                     manager_note TEXT,
@@ -276,7 +281,10 @@ class Database:
             await conn.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS access_status TEXT")
             await conn.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS full_name TEXT")
             await conn.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS phone TEXT")
+            await conn.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS email TEXT")
             await conn.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS inn TEXT")
+            await conn.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS consent_accepted BOOLEAN")
+            await conn.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS consent_accepted_at TIMESTAMPTZ")
             await conn.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS requested_at TIMESTAMPTZ")
             await conn.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS approved_at TIMESTAMPTZ")
             await conn.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS approved_by BIGINT")
@@ -289,6 +297,7 @@ class Database:
             await conn.execute("ALTER TABLE broadcasts ADD COLUMN IF NOT EXISTS target_role TEXT")
             await conn.execute("ALTER TABLE broadcasts ADD COLUMN IF NOT EXISTS target_subcategory TEXT")
             await conn.execute("ALTER TABLE broadcasts ADD COLUMN IF NOT EXISTS image_path TEXT")
+            await conn.execute("ALTER TABLE broadcast_deliveries ADD COLUMN IF NOT EXISTS delivered_message_id BIGINT")
             await conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_users_status_role_subcategory ON users(access_status, role, subcategory)"
             )
@@ -306,6 +315,7 @@ class Database:
             await conn.execute("ALTER TABLE applications ADD COLUMN IF NOT EXISTS booth_number TEXT")
             await conn.execute("ALTER TABLE applications ADD COLUMN IF NOT EXISTS full_name TEXT")
             await conn.execute("ALTER TABLE applications ADD COLUMN IF NOT EXISTS phone TEXT")
+            await conn.execute("ALTER TABLE applications ADD COLUMN IF NOT EXISTS email TEXT")
             await conn.execute("ALTER TABLE applications ADD COLUMN IF NOT EXISTS company TEXT")
             await conn.execute("ALTER TABLE applications ADD COLUMN IF NOT EXISTS inn TEXT")
             await conn.execute("ALTER TABLE applications ADD COLUMN IF NOT EXISTS manager_note TEXT")
@@ -313,6 +323,7 @@ class Database:
 
             await conn.execute("UPDATE users SET role = COALESCE(NULLIF(role, ''), 'partner')")
             await conn.execute("UPDATE users SET access_status = COALESCE(NULLIF(access_status, ''), 'approved')")
+            await conn.execute("UPDATE users SET consent_accepted = COALESCE(consent_accepted, FALSE)")
             await conn.execute("UPDATE access_codes SET role = COALESCE(NULLIF(role, ''), 'partner')")
             await conn.execute("UPDATE broadcasts SET target_role = COALESCE(NULLIF(target_role, ''), 'all')")
             await conn.execute("UPDATE applications SET role = COALESCE(NULLIF(role, ''), 'partner')")
@@ -322,6 +333,7 @@ class Database:
 
             await conn.execute("ALTER TABLE users ALTER COLUMN role SET DEFAULT 'partner'")
             await conn.execute("ALTER TABLE users ALTER COLUMN access_status SET DEFAULT 'approved'")
+            await conn.execute("ALTER TABLE users ALTER COLUMN consent_accepted SET DEFAULT FALSE")
             await conn.execute("ALTER TABLE access_codes ALTER COLUMN role SET DEFAULT 'partner'")
             await conn.execute("ALTER TABLE broadcasts ALTER COLUMN target_role SET DEFAULT 'all'")
             await conn.execute("ALTER TABLE applications ALTER COLUMN role SET DEFAULT 'partner'")
@@ -331,6 +343,7 @@ class Database:
 
             await conn.execute("ALTER TABLE users ALTER COLUMN role SET NOT NULL")
             await conn.execute("ALTER TABLE users ALTER COLUMN access_status SET NOT NULL")
+            await conn.execute("ALTER TABLE users ALTER COLUMN consent_accepted SET NOT NULL")
             await conn.execute("ALTER TABLE access_codes ALTER COLUMN role SET NOT NULL")
             await conn.execute("ALTER TABLE broadcasts ALTER COLUMN target_role SET NOT NULL")
             await conn.execute("ALTER TABLE applications ALTER COLUMN role SET NOT NULL")
@@ -460,9 +473,11 @@ class Database:
         access_code: str,
         full_name: str | None,
         phone: str | None,
+        email: str | None = None,
         company: str | None = None,
         inn: str | None = None,
         referred_by: int | None = None,
+        consent_accepted: bool = False,
     ) -> None:
         role = normalize_role(role)
         subcategory_value = normalize_subcategory(subcategory) or None
@@ -480,8 +495,11 @@ class Database:
                     access_code,
                     full_name,
                     phone,
+                    email,
                     company,
                     inn,
+                    consent_accepted,
+                    consent_accepted_at,
                     requested_at,
                     approved_at,
                     approved_by,
@@ -490,8 +508,8 @@ class Database:
                     registered_at
                 )
                 VALUES (
-                    $1, $2, $3, $4, $5, 'pending', $6, $7, $8, $9, $10,
-                    NOW(), NULL, NULL, NULL, $11, NOW()
+                    $1, $2, $3, $4, $5, 'pending', $6, $7, $8, $9, $10, $11, $12,
+                    CASE WHEN $12 THEN NOW() ELSE NULL END, NOW(), NULL, NULL, NULL, $13, NOW()
                 )
                 ON CONFLICT(telegram_id) DO UPDATE SET
                     username = EXCLUDED.username,
@@ -502,8 +520,11 @@ class Database:
                     access_code = EXCLUDED.access_code,
                     full_name = EXCLUDED.full_name,
                     phone = EXCLUDED.phone,
+                    email = EXCLUDED.email,
                     company = EXCLUDED.company,
                     inn = EXCLUDED.inn,
+                    consent_accepted = EXCLUDED.consent_accepted,
+                    consent_accepted_at = EXCLUDED.consent_accepted_at,
                     requested_at = NOW(),
                     approved_at = NULL,
                     approved_by = NULL,
@@ -518,8 +539,10 @@ class Database:
                 normalized,
                 (full_name or "").strip() or None,
                 (phone or "").strip() or None,
+                (email or "").strip() or None,
                 (company or "").strip() or None,
                 (inn or "").strip() or None,
+                consent_accepted,
                 referred_by,
             )
 
@@ -609,8 +632,11 @@ class Database:
                     access_code,
                     full_name,
                     phone,
+                    email,
                     company,
                     inn,
+                    consent_accepted,
+                    consent_accepted_at,
                     requested_at,
                     approved_at,
                     approved_by,
@@ -750,18 +776,51 @@ class Database:
         telegram_id: int,
         status: str,
         error_text: str | None = None,
+        delivered_message_id: int | None = None,
     ) -> None:
         async with self.pool.acquire() as conn:
             await conn.execute(
                 """
-                INSERT INTO broadcast_deliveries(broadcast_id, telegram_id, status, error_text, delivered_at)
-                VALUES($1, $2, $3, $4, NOW())
+                INSERT INTO broadcast_deliveries(
+                    broadcast_id,
+                    telegram_id,
+                    status,
+                    error_text,
+                    delivered_message_id,
+                    delivered_at
+                )
+                VALUES($1, $2, $3, $4, $5, NOW())
                 """,
                 broadcast_id,
                 telegram_id,
                 status,
                 (error_text or "").strip()[:1000] or None,
+                delivered_message_id,
             )
+
+    async def list_broadcast_deliveries(self, broadcast_id: int) -> list[asyncpg.Record]:
+        async with self.pool.acquire() as conn:
+            return await conn.fetch(
+                """
+                SELECT telegram_id, delivered_message_id
+                FROM broadcast_deliveries
+                WHERE broadcast_id = $1
+                  AND status = 'delivered'
+                  AND delivered_message_id IS NOT NULL
+                """,
+                broadcast_id,
+            )
+
+    async def delete_broadcast(self, broadcast_id: int, only_unsent: bool = True) -> int:
+        async with self.pool.acquire() as conn:
+            if only_unsent:
+                status = await conn.execute(
+                    "DELETE FROM broadcasts WHERE id = $1 AND sent_at IS NULL",
+                    broadcast_id,
+                )
+            else:
+                status = await conn.execute("DELETE FROM broadcasts WHERE id = $1", broadcast_id)
+        return _extract_rowcount(status)
 
     async def get_delivery_stats(self, broadcast_id: int) -> dict[str, int]:
         async with self.pool.acquire() as conn:
@@ -998,8 +1057,9 @@ class Database:
         booth_number: str | None,
         full_name: str | None,
         phone: str | None,
-        company: str | None,
-        inn: str | None,
+        email: str | None = None,
+        company: str | None = None,
+        inn: str | None = None,
         telegram_id: int | None = None,
         status: str = APPLICATION_STATUS_NEW,
     ) -> asyncpg.Record:
@@ -1016,12 +1076,13 @@ class Database:
                     booth_number,
                     full_name,
                     phone,
+                    email,
                     company,
                     inn,
                     created_at,
                     updated_at
                 )
-                VALUES($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NOW(), NOW())
+                VALUES($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, NOW(), NOW())
                 RETURNING *
                 """,
                 token.strip(),
@@ -1033,6 +1094,7 @@ class Database:
                 (booth_number or "").strip() or None,
                 (full_name or "").strip() or None,
                 (phone or "").strip() or None,
+                (email or "").strip() or None,
                 (company or "").strip() or None,
                 (inn or "").strip() or None,
             )

@@ -19,6 +19,14 @@ class AccessRequestFlow(StatesGroup):
     waiting_phone = State()
 
 
+class NoCodeRegistrationFlow(StatesGroup):
+    waiting_contact = State()
+    waiting_email = State()
+    waiting_full_name = State()
+    waiting_company = State()
+    waiting_consent = State()
+
+
 class NavigationFlow(StatesGroup):
     waiting_category_choice = State()
     waiting_subcategory_choice = State()

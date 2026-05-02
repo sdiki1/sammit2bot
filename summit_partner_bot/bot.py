@@ -347,7 +347,10 @@ async def _show_private_menu(
 
     user_row = await db.get_user(message.from_user.id)
     if user_row is None or str(user_row["access_status"]) != STATUS_APPROVED:
-        await _show_public_menu(message, content_loader)
+        if include_public_menu:
+            await _show_public_menu(message, content_loader)
+        else:
+            await message.answer("Для входа отправьте код приглашения.", reply_markup=cancel_keyboard())
         return
 
     await db.update_user_profile(
@@ -528,6 +531,7 @@ async def _complete_request(
     phone: str,
     company: str | None = None,
     inn: str | None = None,
+    include_public_menu: bool = True,
 ) -> None:
     if not message.from_user:
         return
@@ -577,7 +581,7 @@ async def _complete_request(
     await message.answer(
         "✅ Заявка отправлена организатору."
         "\nПосле подтверждения вы получите уведомление и доступ к меню.",
-        reply_markup=public_menu_keyboard(),
+        reply_markup=public_menu_keyboard() if include_public_menu else None,
     )
 
     if role == ROLE_PARTNER:
@@ -607,6 +611,7 @@ async def _continue_application_access_flow(
     settings: Settings,
     content_loader: ContentLoader,
     application: dict,
+    include_public_menu: bool = True,
 ) -> None:
     if not message.from_user:
         return
@@ -658,6 +663,7 @@ async def _continue_application_access_flow(
             phone=phone,
             company=company,
             inn=inn,
+            include_public_menu=include_public_menu,
         )
         return
 
@@ -678,6 +684,7 @@ async def _continue_application_access_flow(
         content_loader=content_loader,
         full_name=full_name,
         phone=phone,
+        include_public_menu=include_public_menu,
     )
 
 
@@ -697,7 +704,7 @@ async def _handle_application_start(
     if row is None:
         await message.answer(
             "⚠️ Заявка по этой ссылке не найдена. Проверьте ссылку или заполните форму заново.",
-            reply_markup=public_menu_keyboard(),
+            reply_markup=public_menu_keyboard() if include_public_menu else None,
         )
         return True
 
@@ -736,6 +743,7 @@ async def _handle_application_start(
         settings=settings,
         content_loader=content_loader,
         application=application,
+        include_public_menu=include_public_menu,
     )
     return True
 
@@ -1216,6 +1224,7 @@ async def create_dispatcher(
             phone=phone,
             company=str(data.get("partner_company", "")),
             inn=str(data.get("partner_inn", "")),
+            include_public_menu=include_public_menu,
         )
 
     @router.message(AccessRequestFlow.waiting_name)
@@ -1243,6 +1252,7 @@ async def create_dispatcher(
             content_loader=content_loader,
             full_name=str(data.get("full_name", "")),
             phone=phone,
+            include_public_menu=include_public_menu,
         )
 
     @router.message(F.text.in_(PUBLIC_MENU_BUTTONS))

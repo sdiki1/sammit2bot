@@ -4,6 +4,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
+from zoneinfo import ZoneInfo
 
 from fastapi import FastAPI, File, Form, Request, UploadFile
 from fastapi.responses import RedirectResponse
@@ -127,6 +128,16 @@ def _dashboard_url(tab: str) -> str:
 
 def _broadcast_uploads_dir(content_file: Path) -> Path:
     return content_file.resolve().parent / "uploads" / "broadcasts"
+
+
+def _parse_admin_datetime(value: str) -> datetime | None:
+    text = value.strip()
+    if not text:
+        return None
+    parsed = datetime.fromisoformat(text)
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=ZoneInfo("Europe/Moscow"))
+    return parsed.astimezone(timezone.utc)
 
 
 def _bot_link_base(settings: Any) -> str:
@@ -545,6 +556,7 @@ def create_app() -> FastAPI:
         message_text: str = Form(""),
         target_role: str = Form(ROLE_ALL),
         target_subcategory: str = Form(""),
+        scheduled_at: str = Form(""),
         delay_minutes: str | None = Form(default="0"),
         broadcast_image: UploadFile | None = File(default=None),
         tab: str = Form(TAB_PUBLIC),
@@ -576,8 +588,10 @@ def create_app() -> FastAPI:
             _set_flash(request, "Укажите текст рассылки или добавьте изображение.")
             return _redirect(_dashboard_url(_sanitize_tab(tab)))
 
+        scheduled_dt = _parse_admin_datetime(scheduled_at) if scheduled_at.strip() else None
         minutes = max(_sanitize_int(delay_minutes, 0), 0)
-        scheduled_at = datetime.now(timezone.utc) + timedelta(minutes=minutes)
+        if scheduled_dt is None:
+            scheduled_dt = datetime.now(timezone.utc) + timedelta(minutes=minutes)
 
         await db.create_broadcast(
             created_by=0,
@@ -587,13 +601,28 @@ def create_app() -> FastAPI:
             image_path=image_path,
             source_chat_id=None,
             source_message_id=None,
-            scheduled_at=scheduled_at,
+            scheduled_at=scheduled_dt,
             status="scheduled",
         )
-        if minutes == 0:
+        if scheduled_at.strip():
+            _set_flash(request, f"Рассылка запланирована на {scheduled_at}.")
+        elif minutes == 0:
             _set_flash(request, "Рассылка создана и будет отправлена в ближайший цикл планировщика.")
         else:
             _set_flash(request, f"Рассылка запланирована через {minutes} мин.")
+        return _redirect(_dashboard_url(_sanitize_tab(tab)))
+
+    @app.post("/broadcasts/delete")
+    async def delete_broadcast(
+        request: Request,
+        broadcast_id: int = Form(...),
+        tab: str = Form(TAB_SYSTEM),
+    ) -> RedirectResponse:
+        maybe_redirect = _require_auth(request)
+        if maybe_redirect is not None:
+            return maybe_redirect
+        deleted = await db.delete_broadcast(broadcast_id=broadcast_id, only_unsent=True)
+        _set_flash(request, "Запланированная рассылка удалена." if deleted else "Можно удалить только неотправленную рассылку.")
         return _redirect(_dashboard_url(_sanitize_tab(tab)))
 
     return app
