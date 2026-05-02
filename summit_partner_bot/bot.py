@@ -15,7 +15,7 @@ from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.types import BufferedInputFile, InlineKeyboardMarkup, Message
 
 from summit_partner_bot.broadcasts import BroadcastScheduler, parse_iso_datetime, send_broadcast
-from summit_partner_bot.config import Settings
+from summit_partner_bot.config import BotProfile, Settings
 from summit_partner_bot.content import ContentLoader
 from summit_partner_bot.db import (
     ROLE_ALL,
@@ -872,9 +872,18 @@ async def create_dispatcher(
     settings: Settings,
     content_loader: ContentLoader,
     scheduler: BroadcastScheduler,
+    profile: BotProfile | None = None,
 ) -> Dispatcher:
     dp = Dispatcher(storage=MemoryStorage())
     router = Router()
+    profile = profile or BotProfile(
+        key="summit",
+        token=settings.bot_token,
+        username=settings.bot_username,
+        role=None,
+        is_public=True,
+    )
+    profile_role = normalize_role(profile.role) if profile.role else None
 
     dp.message.middleware(RateLimitMiddleware(settings.rate_limit_seconds))
     dp.callback_query.middleware(RateLimitMiddleware(settings.rate_limit_seconds))
@@ -928,6 +937,15 @@ async def create_dispatcher(
                 return
 
         if user_row is not None and str(user_row["access_status"]) == STATUS_APPROVED:
+            if profile_role and normalize_role(str(user_row["role"])) != profile_role:
+                await state.set_state(AccessRequestFlow.waiting_access_code)
+                await state.set_data({"entry_role": profile_role})
+                await message.answer(
+                    f"Этот бот предназначен для роли «{role_title(profile_role)}».\n"
+                    "Введите код приглашения для этой роли.",
+                    reply_markup=cancel_keyboard(),
+                )
+                return
             await state.clear()
             await _show_private_menu(message, db, settings, content_loader)
             return
@@ -938,7 +956,7 @@ async def create_dispatcher(
                 state=state,
                 db=db,
                 raw_input=payload,
-                expected_role=None,
+                expected_role=profile_role,
             )
             if ok:
                 return
@@ -960,6 +978,16 @@ async def create_dispatcher(
                 text_out += f"\nПричина: {reason}"
             text_out += "\nДля нового доступа обратитесь к организатору."
             await message.answer(text_out, reply_markup=public_menu_keyboard())
+            return
+
+        if profile_role:
+            await state.set_state(AccessRequestFlow.waiting_access_code)
+            await state.set_data({"entry_role": profile_role})
+            await message.answer(
+                f"Добро пожаловать в бот для роли «{role_title(profile_role)}».\n"
+                "Введите код приглашения или откройте персональную ссылку от организатора.",
+                reply_markup=cancel_keyboard(),
+            )
             return
 
         await _show_public_menu(message, content_loader)
@@ -990,16 +1018,30 @@ async def create_dispatcher(
             state=state,
             db=db,
             raw_input=payload,
-            expected_role=None,
+            expected_role=profile_role,
         )
 
     @router.message(Command("menu"))
-    async def cmd_menu(message: Message) -> None:
+    async def cmd_menu(message: Message, state: FSMContext) -> None:
         if not message.from_user:
             return
         user_row = await db.get_user(message.from_user.id)
         if user_row is not None and str(user_row["access_status"]) == STATUS_APPROVED:
+            if profile_role and normalize_role(str(user_row["role"])) != profile_role:
+                await message.answer(
+                    f"Этот бот предназначен для роли «{role_title(profile_role)}».",
+                    reply_markup=cancel_keyboard(),
+                )
+                return
             await _show_private_menu(message, db, settings, content_loader)
+            return
+        if profile_role:
+            await state.set_state(AccessRequestFlow.waiting_access_code)
+            await state.set_data({"entry_role": profile_role})
+            await message.answer(
+                f"Введите код приглашения для роли «{role_title(profile_role)}».",
+                reply_markup=cancel_keyboard(),
+            )
             return
         await _show_public_menu(message, content_loader)
 
@@ -1012,6 +1054,11 @@ async def create_dispatcher(
         user_row = await db.get_user(message.from_user.id)
         if user_row is not None and str(user_row["access_status"]) == STATUS_APPROVED:
             await message.answer("❌ Действие отменено.", reply_markup=private_menu_keyboard(str(user_row["role"])))
+        elif profile_role:
+            await message.answer(
+                "❌ Действие отменено. Для входа отправьте код приглашения.",
+                reply_markup=cancel_keyboard(),
+            )
         else:
             await message.answer("❌ Действие отменено.", reply_markup=public_menu_keyboard())
 
@@ -2274,10 +2321,19 @@ async def create_dispatcher(
                     state=state,
                     db=db,
                     raw_input=raw_text,
-                    expected_role=None,
+                    expected_role=profile_role,
                 )
                 if ok:
                     return
+
+        if profile_role:
+            await state.set_state(AccessRequestFlow.waiting_access_code)
+            await state.set_data({"entry_role": profile_role})
+            await message.answer(
+                f"Введите код приглашения для роли «{role_title(profile_role)}».",
+                reply_markup=cancel_keyboard(),
+            )
+            return
 
         await message.answer(
             "ℹ️ Используйте кнопки меню для навигации.\n"

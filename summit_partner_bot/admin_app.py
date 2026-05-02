@@ -129,8 +129,9 @@ def _broadcast_uploads_dir(content_file: Path) -> Path:
 
 
 def _bot_link_base(settings: Any) -> str:
-    if settings.bot_username:
-        return f"https://t.me/{settings.bot_username}"
+    username = settings.partner_bot_username or settings.bot_username
+    if username:
+        return f"https://t.me/{username}"
     return ""
 
 
