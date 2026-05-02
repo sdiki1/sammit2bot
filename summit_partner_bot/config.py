@@ -100,6 +100,19 @@ def load_settings() -> Settings:
         )
         if profile.token
     )
+    tokens_by_key: dict[str, str] = {}
+    duplicate_keys: list[str] = []
+    for profile in bot_profiles:
+        existing_key = tokens_by_key.get(profile.token)
+        if existing_key:
+            duplicate_keys.append(f"{existing_key}/{profile.key}")
+        else:
+            tokens_by_key[profile.token] = profile.key
+    if duplicate_keys:
+        raise RuntimeError(
+            "Each Telegram bot must have a unique token. Duplicate bot profiles: "
+            + ", ".join(duplicate_keys)
+        )
 
     bot_token = summit_bot_token
     bot_username = summit_bot_username

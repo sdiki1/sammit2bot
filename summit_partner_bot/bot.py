@@ -260,6 +260,35 @@ def _get_manager_contact(content: dict[str, object], role: str) -> dict[str, str
     return {}
 
 
+def _role_bot_username(settings: Settings, role: str) -> str:
+    normalized = normalize_role(role)
+    if normalized == ROLE_EXPERT:
+        return settings.expert_bot_username
+    if normalized == ROLE_INFLUENCER:
+        return settings.influencer_bot_username
+    return settings.partner_bot_username
+
+
+def _role_bot_link(settings: Settings, role: str) -> str:
+    username = _role_bot_username(settings, role).strip().lstrip("@")
+    if not username:
+        return ""
+    return f"https://t.me/{username}"
+
+
+async def _send_role_bot_transition(message: Message, settings: Settings, role: str) -> bool:
+    link = _role_bot_link(settings, role)
+    if not link:
+        return False
+
+    title = role_title(role)
+    await message.answer(
+        f"Перейдите в отдельный бот для роли «{title}».",
+        reply_markup=url_keyboard([{"title": f"Открыть бот: {title}", "url": link}]),
+    )
+    return True
+
+
 def _parse_broadcast_target(payload: str) -> tuple[str, str]:
     text = payload.strip()
     if not text:
@@ -1208,6 +1237,10 @@ async def create_dispatcher(
 
         if text in ROLE_ENTRY_BUTTONS:
             role = ROLE_ENTRY_BUTTONS[text]
+            if not profile_role:
+                if await _send_role_bot_transition(message, settings, role):
+                    return
+
             if is_approved and normalize_role(str(user_row["role"])) == role:
                 await _show_private_menu(message, db, settings, content_loader)
                 return
