@@ -14,6 +14,10 @@ from starlette.status import HTTP_303_SEE_OTHER
 from summit_partner_bot.config import load_settings
 from summit_partner_bot.content import ContentLoader
 from summit_partner_bot.db import (
+    APPLICATION_STATUS_DONE,
+    APPLICATION_STATUS_IN_PROGRESS,
+    APPLICATION_STATUS_NEW,
+    APPLICATION_STATUS_REJECTED,
     ROLE_ALL,
     ROLE_EXPERT,
     ROLE_INFLUENCER,
@@ -55,6 +59,13 @@ TAB_TITLES = {
     TAB_INFLUENCERS: "Инфлюенсеры",
     TAB_SYSTEM: "Сервис",
 }
+
+APPLICATION_STATUSES = [
+    APPLICATION_STATUS_NEW,
+    APPLICATION_STATUS_IN_PROGRESS,
+    APPLICATION_STATUS_DONE,
+    APPLICATION_STATUS_REJECTED,
+]
 
 TAB_ROLE = {
     TAB_PARTNERS: ROLE_PARTNER,
@@ -115,6 +126,12 @@ def _dashboard_url(tab: str) -> str:
 
 def _broadcast_uploads_dir(content_file: Path) -> Path:
     return content_file.resolve().parent / "uploads" / "broadcasts"
+
+
+def _bot_link_base(settings: Any) -> str:
+    if settings.bot_username:
+        return f"https://t.me/{settings.bot_username}"
+    return ""
 
 
 def _guess_upload_suffix(upload: UploadFile) -> str:
@@ -187,6 +204,52 @@ def create_app() -> FastAPI:
         request.session.clear()
         return _redirect("/login")
 
+    @app.get("/partner-application")
+    async def partner_application_page(request: Request) -> Any:
+        return templates.TemplateResponse(
+            request=request,
+            name="partner_application.html",
+            context={
+                "application": None,
+                "bot_link": "",
+                "bot_link_base": _bot_link_base(settings),
+            },
+        )
+
+    @app.post("/partner-application")
+    async def partner_application_submit(
+        request: Request,
+        request_text: str = Form(""),
+        booth_number: str = Form(""),
+        company: str = Form(""),
+        inn: str = Form(""),
+        full_name: str = Form(""),
+        phone: str = Form(""),
+    ) -> Any:
+        token = uuid4().hex[:24]
+        application = await db.create_application(
+            token=token,
+            role=ROLE_PARTNER,
+            source="site",
+            request_text=request_text,
+            booth_number=booth_number,
+            full_name=full_name,
+            phone=phone,
+            company=company,
+            inn=inn,
+        )
+        base = _bot_link_base(settings)
+        bot_link = f"{base}?start=app_{token}" if base else ""
+        return templates.TemplateResponse(
+            request=request,
+            name="partner_application.html",
+            context={
+                "application": application,
+                "bot_link": bot_link,
+                "bot_link_base": base,
+            },
+        )
+
     @app.get("/dashboard")
     async def dashboard(request: Request) -> Any:
         maybe_redirect = _require_auth(request)
@@ -201,6 +264,8 @@ def create_app() -> FastAPI:
         all_codes = await db.list_access_codes(limit=300)
         broadcasts = await db.list_broadcasts(limit=120)
         feedback_items = await db.list_feedback(limit=120)
+        applications = await db.list_applications(limit=200)
+        support_sessions = await db.list_active_support_sessions(limit=100)
         settings_map = await db.get_content_settings_map()
 
         links_all = await db.list_all_content_links(include_inactive=True)
@@ -236,6 +301,9 @@ def create_app() -> FastAPI:
                 "all_codes": all_codes,
                 "broadcasts": broadcasts,
                 "feedback_items": feedback_items,
+                "applications": applications,
+                "application_statuses": APPLICATION_STATUSES,
+                "support_sessions": support_sessions,
                 "links_by_section": links_by_section,
                 "sections": sections,
                 "visible_sections": visible_sections,
@@ -245,6 +313,7 @@ def create_app() -> FastAPI:
                 "targets": [ROLE_ALL, ROLE_PARTNER, ROLE_EXPERT, ROLE_INFLUENCER],
                 "active_tab": active_tab,
                 "tabs": [(tab, TAB_TITLES[tab]) for tab in TAB_ORDER],
+                "bot_link_base": _bot_link_base(settings),
             },
         )
 
@@ -324,6 +393,8 @@ def create_app() -> FastAPI:
     async def add_link(
         request: Request,
         section: str = Form(...),
+        category: str = Form(""),
+        subcategory: str = Form(""),
         title: str = Form(...),
         url: str = Form(...),
         position: int = Form(100),
@@ -336,6 +407,8 @@ def create_app() -> FastAPI:
         try:
             await db.add_content_link(
                 section=section,
+                category=category,
+                subcategory=subcategory,
                 title=title,
                 url=url,
                 position=position,
@@ -351,6 +424,8 @@ def create_app() -> FastAPI:
         request: Request,
         link_id: int = Form(...),
         section: str = Form(...),
+        category: str = Form(""),
+        subcategory: str = Form(""),
         title: str = Form(...),
         url: str = Form(...),
         position: int = Form(100),
@@ -363,6 +438,8 @@ def create_app() -> FastAPI:
         await db.update_content_link(
             link_id=link_id,
             section=section,
+            category=category,
+            subcategory=subcategory,
             title=title,
             url=url,
             position=position,
@@ -382,6 +459,26 @@ def create_app() -> FastAPI:
             return maybe_redirect
         await db.delete_content_link(link_id)
         _set_flash(request, "Ссылка удалена.")
+        return _redirect(_dashboard_url(_sanitize_tab(tab)))
+
+    @app.post("/applications/status")
+    async def update_application_status(
+        request: Request,
+        application_id: int = Form(...),
+        status: str = Form(APPLICATION_STATUS_NEW),
+        manager_note: str = Form(""),
+        tab: str = Form(TAB_SYSTEM),
+    ) -> RedirectResponse:
+        maybe_redirect = _require_auth(request)
+        if maybe_redirect is not None:
+            return maybe_redirect
+        normalized_status = status if status in APPLICATION_STATUSES else APPLICATION_STATUS_NEW
+        row = await db.set_application_status(
+            application_id=application_id,
+            status=normalized_status,
+            manager_note=manager_note,
+        )
+        _set_flash(request, "Статус заявки обновлён." if row else "Заявка не найдена.")
         return _redirect(_dashboard_url(_sanitize_tab(tab)))
 
     @app.post("/settings/save")

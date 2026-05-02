@@ -20,6 +20,7 @@ def _parse_int_set(raw_value: str) -> set[int]:
 @dataclass(slots=True)
 class Settings:
     bot_token: str
+    bot_username: str
     admin_ids: set[int]
     support_chat_ids: set[int]
     database_url: str
@@ -38,6 +39,7 @@ def load_settings() -> Settings:
     bot_token = os.getenv("BOT_TOKEN", "").strip()
     if not bot_token:
         raise RuntimeError("Environment variable BOT_TOKEN is required")
+    bot_username = os.getenv("BOT_USERNAME", "").strip().lstrip("@")
 
     admin_ids_raw = os.getenv("ADMIN_IDS", "")
     if not admin_ids_raw.strip():
@@ -61,6 +63,7 @@ def load_settings() -> Settings:
 
     return Settings(
         bot_token=bot_token,
+        bot_username=bot_username,
         admin_ids=_parse_int_set(admin_ids_raw),
         support_chat_ids=support_chat_ids,
         database_url=database_url,

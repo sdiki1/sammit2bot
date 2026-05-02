@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Заявка партнёра</title>
+  <style>
+    :root { --line: #dbe3ef; --text: #1d2939; --muted: #526175; --accent: #1256c9; --bg: #f4f7fc; --card: #fff; }
+    * { box-sizing: border-box; }
+    body { margin: 0; font-family: "Segoe UI", Arial, sans-serif; background: var(--bg); color: var(--text); }
+    main { max-width: 760px; margin: 32px auto; padding: 0 16px; }
+    section { border: 1px solid var(--line); border-radius: 12px; background: var(--card); padding: 18px; }
+    h1 { margin: 0 0 12px; font-size: 24px; }
+    p { color: var(--muted); line-height: 1.45; }
+    form { display: grid; gap: 10px; }
+    input, textarea { width: 100%; border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; font: inherit; }
+    textarea { min-height: 120px; resize: vertical; }
+    button, .btn { display: inline-block; border: 0; border-radius: 8px; background: var(--accent); color: #fff; padding: 10px 14px; font-weight: 700; text-decoration: none; cursor: pointer; }
+    .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+    .notice { background: #f0f8ff; border: 1px solid #bae1ff; border-radius: 10px; padding: 12px; margin-top: 12px; }
+    .muted { color: var(--muted); font-size: 13px; }
+    @media (max-width: 640px) { .grid { grid-template-columns: 1fr; } }
+  </style>
+</head>
+<body>
+  <main>
+    <section>
+      <h1>Заявка партнёра</h1>
+      {% if application %}
+        <p>Заявка #{{ application.id }} отправлена. Менеджер увидит её в админ-панели.</p>
+        {% if bot_link %}
+          <div class="notice">
+            <p>Продолжите в Telegram-боте. Сообщение и данные заявки будут подтянуты автоматически.</p>
+            <a class="btn" href="{{ bot_link }}">Открыть бот</a>
+          </div>
+        {% else %}
+          <div class="notice">
+            <p>Заявка сохранена. Чтобы получить прямую Telegram-ссылку, укажите `BOT_USERNAME` в окружении админки.</p>
+            <div class="muted">Payload: app_{{ application.token }}</div>
+          </div>
+        {% endif %}
+      {% else %}
+        <p>Заполните данные для бронирования стенда. После отправки появится уникальная ссылка в Telegram-бот.</p>
+        <form method="post" action="/partner-application">
+          <textarea name="request_text" placeholder="Сообщение / заявка, например: хочу забронировать стенд А1.16" required></textarea>
+          <div class="grid">
+            <input name="booth_number" placeholder="Номер стенда, например А1.16">
+            <input name="company" placeholder="Компания">
+          </div>
+          <div class="grid">
+            <input name="inn" placeholder="ИНН">
+            <input name="full_name" placeholder="Контактное лицо">
+          </div>
+          <input name="phone" placeholder="Телефон">
+          <button type="submit">Отправить заявку</button>
+        </form>
+      {% endif %}
+    </section>
+  </main>
+</body>
+</html>

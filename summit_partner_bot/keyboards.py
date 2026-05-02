@@ -48,6 +48,7 @@ BTN_PROGRAM = "📅 Программа саммита"
 BTN_LINKS = "🔗 Полезные ссылки"
 BTN_MANAGER = "🧑‍💼 Связаться с менеджером"
 BTN_MATERIALS = "📎 Материалы"
+BTN_BOOTH_BOOKING = "🏗 Забронировать стенд"
 BTN_INFLUENCER_CONDITIONS = "📋 Условия для инфлюенсеров"
 BTN_INFLUENCER_APPLICATION = "📝 Заявка"
 
@@ -72,6 +73,9 @@ def public_menu_keyboard() -> ReplyKeyboardMarkup:
 
 def private_menu_keyboard(role: str) -> ReplyKeyboardMarkup:
     rows = _chunk_buttons([BTN_NEWS, BTN_PROGRAM, BTN_LINKS, BTN_MATERIALS])
+
+    if role == ROLE_PARTNER:
+        rows.extend(_chunk_buttons([BTN_BOOTH_BOOKING]))
 
     if role == ROLE_INFLUENCER:
         rows.extend(_chunk_buttons([BTN_INFLUENCER_CONDITIONS, BTN_INFLUENCER_APPLICATION]))

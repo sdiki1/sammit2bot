@@ -22,6 +22,7 @@ from summit_partner_bot.db import (
     ROLE_EXPERT,
     ROLE_INFLUENCER,
     ROLE_PARTNER,
+    APPLICATION_STATUS_IN_PROGRESS,
     SECTION_EXPERT_MATERIALS,
     SECTION_EXPERT_USEFUL_LINKS,
     SECTION_INFLUENCER_MATERIALS,
@@ -41,6 +42,7 @@ from summit_partner_bot.db import (
 from summit_partner_bot.keyboards import (
     BTN_ABOUT,
     BTN_BACK,
+    BTN_BOOTH_BOOKING,
     BTN_BUY_TICKET,
     BTN_CANCEL,
     BTN_CHANNEL,
@@ -72,11 +74,12 @@ from summit_partner_bot.keyboards import (
     url_keyboard,
 )
 from summit_partner_bot.middlewares import RateLimitMiddleware
-from summit_partner_bot.states import AccessRequestFlow, FeedbackFlow, NavigationFlow, SupportFlow
+from summit_partner_bot.states import AccessRequestFlow, BoothBookingFlow, FeedbackFlow, NavigationFlow, SupportFlow
 
 logger = logging.getLogger(__name__)
 USER_MARKER_RE = re.compile(r"#USER_(\d+)")
 REF_START_RE = re.compile(r"^ref_(.+)$", re.IGNORECASE)
+APP_START_RE = re.compile(r"^app_([0-9a-fA-F]{8,64})$", re.IGNORECASE)
 PHONE_RE = re.compile(r"^[+\d][\d\s\-()]{6,}$")
 CAPTION_PREFIX_RE = re.compile(r"^[^0-9A-Za-zА-Яа-яЁё]+")
 
@@ -104,6 +107,7 @@ ALL_MAIN_BUTTONS = set(PUBLIC_MENU_BUTTONS) | {
     BTN_PROGRAM,
     BTN_LINKS,
     BTN_MATERIALS,
+    BTN_BOOTH_BOOKING,
     BTN_MANAGER,
     BTN_INFLUENCER_CONDITIONS,
     BTN_INFLUENCER_APPLICATION,
@@ -370,6 +374,44 @@ async def _notify_access_request(
             logger.exception("Failed to notify access request to %s", chat_id)
 
 
+async def _notify_application(
+    bot: Bot,
+    settings: Settings,
+    application_id: int,
+    user_id: int | None,
+    source: str,
+    role: str,
+    request_text: str | None,
+    booth_number: str | None,
+    full_name: str | None,
+    phone: str | None,
+    company: str | None,
+    inn: str | None,
+) -> None:
+    lines = [
+        "🆕 Новая заявка / бронь стенда",
+        f"ID: {application_id}",
+        f"Источник: {source}",
+        f"Роль: {role_title(role)} ({role})",
+        f"Telegram ID: {user_id or '—'}",
+        f"Стенд: {booth_number or '—'}",
+        f"Компания: {company or '—'}",
+        f"ИНН: {inn or '—'}",
+        f"Контакт: {full_name or '—'}",
+        f"Телефон: {phone or '—'}",
+        "",
+        request_text or "Сообщение не указано.",
+    ]
+    text = "\n".join(lines)
+
+    targets = set(settings.admin_ids) | set(settings.support_chat_ids)
+    for chat_id in targets:
+        try:
+            await bot.send_message(chat_id=chat_id, text=text)
+        except Exception:  # noqa: BLE001
+            logger.exception("Failed to notify application to %s", chat_id)
+
+
 async def _start_access_flow(message: Message, state: FSMContext, code_row: dict | object) -> None:
     role = normalize_role(str(code_row["role"]))
     code = str(code_row["code"])
@@ -515,6 +557,138 @@ async def _complete_request(
             )
 
 
+async def _continue_application_access_flow(
+    message: Message,
+    state: FSMContext,
+    db: Database,
+    settings: Settings,
+    content_loader: ContentLoader,
+    application: dict,
+) -> None:
+    if not message.from_user:
+        return
+
+    role = normalize_role(str(application.get("role", ROLE_PARTNER)))
+    access_code = f"APP{application.get('id')}"
+    full_name = str(application.get("full_name") or "").strip()
+    phone = str(application.get("phone") or "").strip()
+    company = str(application.get("company") or "").strip()
+    inn = str(application.get("inn") or "").strip()
+
+    await state.set_data(
+        {
+            "requested_role": role,
+            "access_code": access_code,
+            "partner_inn": inn,
+            "partner_company": company,
+            "partner_contact_name": full_name,
+            "full_name": full_name,
+        }
+    )
+
+    if role == ROLE_PARTNER:
+        if not inn or not inn.isdigit() or len(inn) not in (10, 12):
+            await state.set_state(AccessRequestFlow.waiting_partner_inn)
+            await message.answer("Введите ИНН компании (10 или 12 цифр):", reply_markup=cancel_keyboard())
+            return
+        if not company:
+            await state.set_state(AccessRequestFlow.waiting_partner_company)
+            await message.answer("🏢 Введите наименование компании:", reply_markup=cancel_keyboard())
+            return
+        if not full_name:
+            await state.set_state(AccessRequestFlow.waiting_partner_contact_name)
+            await message.answer("👤 Введите имя контактного лица:", reply_markup=cancel_keyboard())
+            return
+        if not phone or not PHONE_RE.match(phone):
+            await state.set_state(AccessRequestFlow.waiting_partner_phone)
+            await message.answer("📞 Введите телефон контактного лица (пример: +79991234567):", reply_markup=cancel_keyboard())
+            return
+
+        await _complete_request(
+            message=message,
+            state=state,
+            db=db,
+            settings=settings,
+            content_loader=content_loader,
+            full_name=full_name,
+            phone=phone,
+            company=company,
+            inn=inn,
+        )
+        return
+
+    if not full_name:
+        await state.set_state(AccessRequestFlow.waiting_name)
+        await message.answer("Введите ваше имя и фамилию:", reply_markup=cancel_keyboard())
+        return
+    if not phone or not PHONE_RE.match(phone):
+        await state.set_state(AccessRequestFlow.waiting_phone)
+        await message.answer("📞 Введите телефон (пример: +79991234567):", reply_markup=cancel_keyboard())
+        return
+
+    await _complete_request(
+        message=message,
+        state=state,
+        db=db,
+        settings=settings,
+        content_loader=content_loader,
+        full_name=full_name,
+        phone=phone,
+    )
+
+
+async def _handle_application_start(
+    message: Message,
+    state: FSMContext,
+    db: Database,
+    settings: Settings,
+    content_loader: ContentLoader,
+    token: str,
+) -> bool:
+    if not message.from_user:
+        return False
+
+    row = await db.get_application_by_token(token)
+    if row is None:
+        await message.answer(
+            "⚠️ Заявка по этой ссылке не найдена. Проверьте ссылку или заполните форму заново.",
+            reply_markup=public_menu_keyboard(),
+        )
+        return True
+
+    updated = await db.attach_application_telegram(int(row["id"]), message.from_user.id)
+    application = dict(updated or row)
+    request_text = str(application.get("request_text") or "").strip()
+    booth_number = str(application.get("booth_number") or "").strip()
+
+    await message.answer(
+        "👋 Добро пожаловать в бот партнёров СТАММИТ26.\n"
+        "Мы нашли вашу заявку с сайта и привязали её к этому Telegram-чату."
+    )
+    if request_text or booth_number:
+        lines = ["Ваше сообщение с сайта:"]
+        if request_text:
+            lines.append(request_text)
+        if booth_number:
+            lines.append(f"Стенд: {booth_number}")
+        await message.answer("\n".join(lines))
+
+    user_row = await db.get_user(message.from_user.id)
+    if user_row is not None and str(user_row["access_status"]) == STATUS_APPROVED:
+        await _show_private_menu(message, db, settings, content_loader)
+        return True
+
+    await _continue_application_access_flow(
+        message=message,
+        state=state,
+        db=db,
+        settings=settings,
+        content_loader=content_loader,
+        application=application,
+    )
+    return True
+
+
 async def _ensure_private_user(
     message: Message,
     db: Database,
@@ -584,9 +758,85 @@ def _get_role_links(content: dict, role: str, is_materials: bool) -> list[dict[s
             continue
         title = str(item.get("title", "")).strip()
         url = str(item.get("url", "")).strip()
+        category = str(item.get("category", "")).strip()
+        subcategory = str(item.get("subcategory", "")).strip()
         if title and url:
-            result.append({"title": title, "url": url})
+            result.append({"title": title, "url": url, "category": category, "subcategory": subcategory})
     return result
+
+
+def _label_or_default(value: str, default: str) -> str:
+    text = value.strip()
+    return text or default
+
+
+def _items_have_categories(items: list[dict[str, str]]) -> bool:
+    return any(item.get("category") or item.get("subcategory") for item in items)
+
+
+def _category_titles(items: list[dict[str, str]]) -> list[str]:
+    titles: list[str] = []
+    seen: set[str] = set()
+    for item in items:
+        title = _label_or_default(str(item.get("category", "")), "Без категории")
+        key = title.casefold()
+        if key in seen:
+            continue
+        seen.add(key)
+        titles.append(title)
+    return titles
+
+
+def _subcategory_titles(items: list[dict[str, str]], category: str) -> list[str]:
+    titles: list[str] = []
+    seen: set[str] = set()
+    for item in items:
+        item_category = _label_or_default(str(item.get("category", "")), "Без категории")
+        if item_category != category:
+            continue
+        title = _label_or_default(str(item.get("subcategory", "")), "Без подкатегории")
+        key = title.casefold()
+        if key in seen:
+            continue
+        seen.add(key)
+        titles.append(title)
+    return titles
+
+
+def _links_map_from_items(items: list[dict[str, str]]) -> dict[str, str]:
+    result: dict[str, str] = {}
+    for item in items:
+        title = str(item.get("title", "")).strip()
+        url = str(item.get("url", "")).strip()
+        if title and url:
+            result[title] = url
+    return result
+
+
+async def _start_nested_navigation(
+    message: Message,
+    state: FSMContext,
+    role: str,
+    items: list[dict[str, str]],
+    is_materials: bool,
+) -> None:
+    if not _items_have_categories(items):
+        links_map = _group_links_by_title(items)
+        await state.set_state(NavigationFlow.waiting_material_choice if is_materials else NavigationFlow.waiting_link_choice)
+        await state.update_data(nav_role=role, nav_links=links_map, nav_is_materials=is_materials)
+        await message.answer(
+            "📎 Выберите материал:" if is_materials else "🔗 Выберите нужную ссылку:",
+            reply_markup=section_keyboard(list(links_map.keys())),
+        )
+        return
+
+    categories = _category_titles(items)
+    await state.set_state(NavigationFlow.waiting_category_choice)
+    await state.update_data(nav_role=role, nav_items=items, nav_is_materials=is_materials)
+    await message.answer(
+        "📂 Выберите категорию:",
+        reply_markup=section_keyboard(categories),
+    )
 
 
 async def _send_public_button_link(message: Message, content_loader: ContentLoader, button_title: str) -> bool:
@@ -663,6 +913,19 @@ async def create_dispatcher(
                     " участие будет зачтено пригласившему.",
                 )
             payload = ""
+
+        app_match = APP_START_RE.match(raw_payload)
+        if app_match:
+            handled = await _handle_application_start(
+                message=message,
+                state=state,
+                db=db,
+                settings=settings,
+                content_loader=content_loader,
+                token=app_match.group(1),
+            )
+            if handled:
+                return
 
         if user_row is not None and str(user_row["access_status"]) == STATUS_APPROVED:
             await state.clear()
@@ -1022,13 +1285,7 @@ async def create_dispatcher(
             await message.answer("🔗 Полезные ссылки пока не добавлены.", reply_markup=private_menu_keyboard(role))
             return
 
-        links_map = _group_links_by_title(items)
-        await state.set_state(NavigationFlow.waiting_link_choice)
-        await state.update_data(nav_role=role, nav_links=links_map)
-        await message.answer(
-            "🔗 Выберите нужную ссылку:",
-            reply_markup=section_keyboard(list(links_map.keys())),
-        )
+        await _start_nested_navigation(message, state, role, items, is_materials=False)
 
     @router.message(F.text == BTN_MATERIALS)
     async def show_materials(message: Message, state: FSMContext) -> None:
@@ -1043,13 +1300,7 @@ async def create_dispatcher(
             await message.answer("📎 Материалы пока не добавлены.", reply_markup=private_menu_keyboard(role))
             return
 
-        links_map = _group_links_by_title(items)
-        await state.set_state(NavigationFlow.waiting_material_choice)
-        await state.update_data(nav_role=role, nav_links=links_map)
-        await message.answer(
-            "📎 Выберите материал:",
-            reply_markup=section_keyboard(list(links_map.keys())),
-        )
+        await _start_nested_navigation(message, state, role, items, is_materials=True)
 
     @router.message(F.text == BTN_BACK)
     async def go_back(message: Message, state: FSMContext) -> None:
@@ -1084,6 +1335,75 @@ async def create_dispatcher(
 
         await _send_link_or_file(message, text, target)
         await message.answer("👉 Выберите следующую ссылку или вернитесь назад.", reply_markup=section_keyboard(list(links_map.keys())))
+
+    @router.message(NavigationFlow.waiting_category_choice)
+    async def handle_category_choice(message: Message, state: FSMContext) -> None:
+        text = (message.text or "").strip()
+        if text == BTN_BACK:
+            await go_back(message, state)
+            return
+
+        data = await state.get_data()
+        items = data.get("nav_items", [])
+        if not isinstance(items, list):
+            items = []
+        categories = _category_titles(items)
+        if text not in categories:
+            await message.answer("⚠️ Выберите категорию из списка или нажмите «⬅️ Назад».")
+            return
+
+        subcategories = _subcategory_titles(items, text)
+        await state.update_data(nav_category=text)
+        if len(subcategories) > 1 or (subcategories and subcategories[0] != "Без подкатегории"):
+            await state.set_state(NavigationFlow.waiting_subcategory_choice)
+            await message.answer("📁 Выберите подкатегорию:", reply_markup=section_keyboard(subcategories))
+            return
+
+        selected = [
+            item
+            for item in items
+            if _label_or_default(str(item.get("category", "")), "Без категории") == text
+        ]
+        links_map = _links_map_from_items(selected)
+        is_materials = bool(data.get("nav_is_materials"))
+        await state.set_state(NavigationFlow.waiting_material_choice if is_materials else NavigationFlow.waiting_link_choice)
+        await state.update_data(nav_links=links_map)
+        await message.answer(
+            "📎 Выберите материал:" if is_materials else "🔗 Выберите нужную ссылку:",
+            reply_markup=section_keyboard(list(links_map.keys())),
+        )
+
+    @router.message(NavigationFlow.waiting_subcategory_choice)
+    async def handle_subcategory_choice(message: Message, state: FSMContext) -> None:
+        text = (message.text or "").strip()
+        if text == BTN_BACK:
+            await go_back(message, state)
+            return
+
+        data = await state.get_data()
+        items = data.get("nav_items", [])
+        category = str(data.get("nav_category", ""))
+        if not isinstance(items, list):
+            items = []
+        subcategories = _subcategory_titles(items, category)
+        if text not in subcategories:
+            await message.answer("⚠️ Выберите подкатегорию из списка или нажмите «⬅️ Назад».")
+            return
+
+        selected = [
+            item
+            for item in items
+            if _label_or_default(str(item.get("category", "")), "Без категории") == category
+            and _label_or_default(str(item.get("subcategory", "")), "Без подкатегории") == text
+        ]
+        links_map = _links_map_from_items(selected)
+        is_materials = bool(data.get("nav_is_materials"))
+        await state.set_state(NavigationFlow.waiting_material_choice if is_materials else NavigationFlow.waiting_link_choice)
+        await state.update_data(nav_links=links_map)
+        await message.answer(
+            "📎 Выберите материал:" if is_materials else "🔗 Выберите нужную ссылку:",
+            reply_markup=section_keyboard(list(links_map.keys())),
+        )
 
     @router.message(NavigationFlow.waiting_material_choice)
     async def handle_material_choice(message: Message, state: FSMContext) -> None:
@@ -1156,6 +1476,114 @@ async def create_dispatcher(
 
         await _send_link_or_file(message, item["title"], item["url"])
 
+    @router.message(F.text == BTN_BOOTH_BOOKING)
+    async def start_booth_booking(message: Message, state: FSMContext) -> None:
+        user_row = await _ensure_private_user(message, db, content_loader, required_role=ROLE_PARTNER)
+        if user_row is None:
+            return
+
+        await state.set_state(BoothBookingFlow.waiting_booth)
+        await state.set_data(
+            {
+                "booking_company": str(user_row.get("company") or ""),
+                "booking_contact_name": str(user_row.get("full_name") or user_row.get("first_name") or ""),
+                "booking_phone": str(user_row.get("phone") or ""),
+                "booking_inn": str(user_row.get("inn") or ""),
+            }
+        )
+        await message.answer(
+            "🏗 Укажите номер стенда, который хотите забронировать (например: А1.16):",
+            reply_markup=cancel_keyboard(),
+        )
+
+    @router.message(BoothBookingFlow.waiting_booth)
+    async def booking_booth(message: Message, state: FSMContext) -> None:
+        booth = (message.text or "").strip()
+        if len(booth) < 2:
+            await message.answer("⚠️ Укажите номер стенда.")
+            return
+        await state.update_data(booking_booth=booth)
+        data = await state.get_data()
+        if str(data.get("booking_company", "")).strip():
+            await state.set_state(BoothBookingFlow.waiting_contact_name)
+            await message.answer("👤 Введите имя контактного лица:")
+            return
+        await state.set_state(BoothBookingFlow.waiting_company)
+        await message.answer("🏢 Введите наименование компании:")
+
+    @router.message(BoothBookingFlow.waiting_company)
+    async def booking_company(message: Message, state: FSMContext) -> None:
+        company = (message.text or "").strip()
+        if len(company) < 2:
+            await message.answer("⚠️ Укажите корректное наименование компании.")
+            return
+        await state.update_data(booking_company=company)
+        await state.set_state(BoothBookingFlow.waiting_contact_name)
+        await message.answer("👤 Введите имя контактного лица:")
+
+    @router.message(BoothBookingFlow.waiting_contact_name)
+    async def booking_contact(message: Message, state: FSMContext) -> None:
+        full_name = (message.text or "").strip()
+        if len(full_name) < 2:
+            await message.answer("⚠️ Введите имя контактного лица.")
+            return
+        await state.update_data(booking_contact_name=full_name)
+        await state.set_state(BoothBookingFlow.waiting_phone)
+        await message.answer("📞 Введите телефон контактного лица (пример: +79991234567):")
+
+    @router.message(BoothBookingFlow.waiting_phone)
+    async def booking_phone(message: Message, state: FSMContext) -> None:
+        phone = (message.text or "").strip()
+        if not PHONE_RE.match(phone):
+            await message.answer("⚠️ Неверный формат телефона. Попробуйте снова.")
+            return
+        await state.update_data(booking_phone=phone)
+        await state.set_state(BoothBookingFlow.waiting_comment)
+        await message.answer("✍️ Добавьте комментарий к заявке или отправьте «-», если комментария нет.")
+
+    @router.message(BoothBookingFlow.waiting_comment)
+    async def booking_comment(message: Message, state: FSMContext) -> None:
+        if not message.from_user:
+            return
+        comment = (message.text or "").strip()
+        if comment == "-":
+            comment = ""
+        data = await state.get_data()
+        token = f"bot{message.from_user.id}{int(datetime.now(timezone.utc).timestamp())}"
+        request_text = comment or f"Хочу забронировать стенд {data.get('booking_booth')}"
+        application = await db.create_application(
+            token=token,
+            role=ROLE_PARTNER,
+            source="bot_booth",
+            request_text=request_text,
+            booth_number=str(data.get("booking_booth", "")),
+            full_name=str(data.get("booking_contact_name", "")),
+            phone=str(data.get("booking_phone", "")),
+            company=str(data.get("booking_company", "")),
+            inn=str(data.get("booking_inn", "")),
+            telegram_id=message.from_user.id,
+            status=APPLICATION_STATUS_IN_PROGRESS,
+        )
+        await _notify_application(
+            bot=message.bot,
+            settings=settings,
+            application_id=int(application["id"]),
+            user_id=message.from_user.id,
+            source="bot_booth",
+            role=ROLE_PARTNER,
+            request_text=request_text,
+            booth_number=str(data.get("booking_booth", "")),
+            full_name=str(data.get("booking_contact_name", "")),
+            phone=str(data.get("booking_phone", "")),
+            company=str(data.get("booking_company", "")),
+            inn=str(data.get("booking_inn", "")),
+        )
+        await state.clear()
+        await message.answer(
+            "✅ Заявка на бронирование стенда отправлена. Менеджер увидит её в админ-панели.",
+            reply_markup=private_menu_keyboard(ROLE_PARTNER),
+        )
+
     @router.message(F.text == BTN_MANAGER)
     async def manager_contact(message: Message, state: FSMContext) -> None:
         user_row = await _ensure_private_user(message, db, content_loader)
@@ -1201,11 +1629,11 @@ async def create_dispatcher(
 
         if not settings.support_chat_ids:
             await state.clear()
-        await message.answer(
-            "⚠️ Поддержка не настроена. Обратитесь к организатору.",
-            reply_markup=private_menu_keyboard(role),
-        )
-        return
+            await message.answer(
+                "⚠️ Поддержка не настроена. Обратитесь к организатору.",
+                reply_markup=private_menu_keyboard(role),
+            )
+            return
 
         username = f"@{user_row['username']}" if user_row["username"] else "—"
         question_header = (
@@ -1215,7 +1643,9 @@ async def create_dispatcher(
             f"Имя: {user_row['full_name'] or user_row['first_name'] or message.from_user.first_name or '—'}\n"
             f"Username: {username}\n"
             f"Телефон: {user_row['phone'] or '—'}\n"
-            f"Компания: {user_row['company'] or '—'}"
+            f"Компания: {user_row['company'] or '—'}\n\n"
+            f"Подключиться к диалогу: /connect_user {message.from_user.id}\n"
+            f"Закрыть диалог: /disconnect_user {message.from_user.id}"
         )
 
         delivered_to_support = 0
@@ -1243,6 +1673,69 @@ async def create_dispatcher(
                 "⚠️ Не удалось доставить вопрос в поддержку. Попробуйте позже.",
                 reply_markup=private_menu_keyboard(role),
             )
+
+    @router.message(Command("connect_user"))
+    async def manager_connect_user(message: Message) -> None:
+        if not message.from_user:
+            return
+        if message.chat.id not in settings.support_chat_ids and not _is_admin(message, settings):
+            return
+
+        payload = _extract_command_payload(message.text or "")
+        if not payload:
+            await message.answer("Формат: /connect_user TELEGRAM_ID")
+            return
+        try:
+            user_id = int(payload.split()[0])
+        except ValueError:
+            await message.answer("TELEGRAM_ID должен быть числом.")
+            return
+
+        support_chat_id = message.chat.id
+        if support_chat_id not in settings.support_chat_ids and settings.support_chat_ids:
+            support_chat_id = next(iter(settings.support_chat_ids))
+
+        await db.connect_support_session(
+            telegram_id=user_id,
+            support_chat_id=support_chat_id,
+            manager_telegram_id=message.from_user.id,
+        )
+        await message.answer(
+            f"✅ Менеджер подключён к пользователю {user_id}.\n"
+            f"Чтобы закрыть диалог: /disconnect_user {user_id}"
+        )
+        try:
+            await message.bot.send_message(chat_id=user_id, text="🧑‍💼 Менеджер подключился к диалогу.")
+        except Exception:  # noqa: BLE001
+            logger.exception("Failed to notify user about manager connect %s", user_id)
+
+    @router.message(Command("disconnect_user"))
+    async def manager_disconnect_user(message: Message) -> None:
+        if not message.from_user:
+            return
+        if message.chat.id not in settings.support_chat_ids and not _is_admin(message, settings):
+            return
+
+        payload = _extract_command_payload(message.text or "")
+        if not payload:
+            await message.answer("Формат: /disconnect_user TELEGRAM_ID")
+            return
+        try:
+            user_id = int(payload.split()[0])
+        except ValueError:
+            await message.answer("TELEGRAM_ID должен быть числом.")
+            return
+
+        row = await db.close_support_session(user_id)
+        if row is None:
+            await message.answer("Активный диалог не найден.")
+            return
+
+        await message.answer(f"✅ Диалог с пользователем {user_id} закрыт.")
+        try:
+            await message.bot.send_message(chat_id=user_id, text="🧑‍💼 Менеджер покинул чат.")
+        except Exception:  # noqa: BLE001
+            logger.exception("Failed to notify user about manager disconnect %s", user_id)
 
     @router.message(Command("pending_requests"))
     async def admin_pending_requests(message: Message) -> None:
@@ -1688,7 +2181,13 @@ async def create_dispatcher(
         )
 
     @router.message(
-        lambda message: message.chat.id in settings.support_chat_ids and message.reply_to_message is not None
+        lambda message: (
+            message.reply_to_message is not None
+            and (
+                message.chat.id in settings.support_chat_ids
+                or (message.from_user is not None and message.from_user.id in settings.admin_ids)
+            )
+        )
     )
     async def bridge_manager_reply(message: Message) -> None:
         if not message.from_user:
@@ -1733,6 +2232,33 @@ async def create_dispatcher(
             return
 
         user_row = await db.get_user(message.from_user.id)
+        raw_text = (message.text or "").strip()
+
+        active_session = await db.get_active_support_session(message.from_user.id)
+        if active_session is not None and raw_text not in ALL_MAIN_BUTTONS:
+            username = f"@{message.from_user.username}" if message.from_user.username else "—"
+            header = (
+                "💬 Сообщение в активном диалоге\n"
+                f"#USER_{message.from_user.id}\n"
+                f"Username: {username}"
+            )
+            try:
+                meta_message = await message.bot.send_message(
+                    chat_id=int(active_session["support_chat_id"]),
+                    text=header,
+                )
+                await message.bot.copy_message(
+                    chat_id=int(active_session["support_chat_id"]),
+                    from_chat_id=message.chat.id,
+                    message_id=message.message_id,
+                    reply_to_message_id=meta_message.message_id,
+                )
+                await message.answer("✅ Сообщение отправлено менеджеру.")
+            except Exception:  # noqa: BLE001
+                logger.exception("Failed to forward active support message from %s", message.from_user.id)
+                await message.answer("⚠️ Не удалось отправить сообщение менеджеру. Попробуйте позже.")
+            return
+
         if user_row is not None and str(user_row["access_status"]) == STATUS_APPROVED:
             await message.answer(
                 "ℹ️ Используйте кнопки меню для навигации.",
@@ -1741,7 +2267,6 @@ async def create_dispatcher(
             return
 
         current_state = await state.get_state()
-        raw_text = (message.text or "").strip()
         if current_state is None and raw_text and raw_text not in ALL_MAIN_BUTTONS:
             if _looks_like_access_code_candidate(raw_text):
                 ok = await _process_access_code_input(

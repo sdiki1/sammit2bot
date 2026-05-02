@@ -188,11 +188,15 @@
       <div class="stat"><div class="k">Рассылки</div><div class="v">{{ stats.broadcasts_total }}</div></div>
       <div class="stat"><div class="k">Ожидают отправки</div><div class="v">{{ stats.pending_broadcasts }}</div></div>
       <div class="stat"><div class="k">Отзывы</div><div class="v">{{ stats.feedback_total }}</div></div>
+      <div class="stat"><div class="k">Заявки/брони</div><div class="v">{{ stats.applications_total }}</div></div>
+      <div class="stat"><div class="k">Новые заявки</div><div class="v">{{ stats.new_applications }}</div></div>
+      <div class="stat"><div class="k">Менеджер онлайн</div><div class="v">{{ stats.active_support_sessions }}</div></div>
     </section>
 
     {% if active_tab == 'public' %}
       <section>
         <h2>Публичные настройки</h2>
+        <p class="muted">Форма заявки партнёра: <a href="/partner-application" target="_blank">/partner-application</a>{% if not bot_link_base %}. Для Telegram deep-link задайте `BOT_USERNAME`.{% endif %}</p>
         <form method="post" action="/settings/save" class="row">
           <input type="hidden" name="tab" value="{{ active_tab }}">
           <input class="c6" name="program_title" value="{{ settings_map.get('program_title', '') }}" placeholder="Название программы">
@@ -324,8 +328,10 @@
               <option value="{{ section }}">{{ section }}</option>
             {% endfor %}
           </select>
-          <input class="c3" name="title" placeholder="Название" required>
-          <input class="c4" name="url" placeholder="URL или file_id:..." required>
+          <input class="c2" name="category" placeholder="Категория">
+          <input class="c2" name="subcategory" placeholder="Подкатегория">
+          <input class="c2" name="title" placeholder="Название" required>
+          <input class="c3" name="url" placeholder="URL или file_id:..." required>
           <input class="c1" type="number" name="position" value="100">
           <label class="c1"><input type="checkbox" name="is_active" checked> On</label>
           <button class="c2" type="submit">Добавить</button>
@@ -343,8 +349,10 @@
                     <option value="{{ s }}" {% if s == link.section %}selected{% endif %}>{{ s }}</option>
                   {% endfor %}
                 </select>
-                <input class="c3" name="title" value="{{ link.title }}" required>
-                <input class="c4" name="url" value="{{ link.url }}" required>
+                <input class="c2" name="category" value="{{ link.category or '' }}" placeholder="Категория">
+                <input class="c2" name="subcategory" value="{{ link.subcategory or '' }}" placeholder="Подкатегория">
+                <input class="c2" name="title" value="{{ link.title }}" required>
+                <input class="c3" name="url" value="{{ link.url }}" required>
                 <input class="c1" type="number" name="position" value="{{ link.position }}">
                 <label class="c1"><input type="checkbox" name="is_active" {% if link.is_active %}checked{% endif %}> On</label>
                 <button class="c2" type="submit">Сохранить</button>
@@ -363,6 +371,71 @@
     {% endif %}
 
     {% if active_tab == 'system' %}
+      <section>
+        <h2>Заявки и бронирование стендов</h2>
+        {% if applications %}
+          <table>
+            <thead>
+              <tr><th>ID</th><th>Источник</th><th>Статус</th><th>Telegram</th><th>Стенд</th><th>Компания</th><th>Контакт</th><th>Телефон</th><th>Сообщение</th><th>Действие</th></tr>
+            </thead>
+            <tbody>
+              {% for a in applications %}
+                <tr>
+                  <td>{{ a.id }}</td>
+                  <td>{{ a.source }}</td>
+                  <td>{{ a.status }}</td>
+                  <td>{{ a.telegram_id or '-' }}</td>
+                  <td>{{ a.booth_number or '-' }}</td>
+                  <td>{{ a.company or '-' }}{% if a.inn %}<br><span class="muted">ИНН {{ a.inn }}</span>{% endif %}</td>
+                  <td>{{ a.full_name or '-' }}</td>
+                  <td>{{ a.phone or '-' }}</td>
+                  <td>{{ a.request_text or '-' }}</td>
+                  <td>
+                    <form method="post" action="/applications/status" class="row">
+                      <input type="hidden" name="tab" value="{{ active_tab }}">
+                      <input type="hidden" name="application_id" value="{{ a.id }}">
+                      <select class="c12" name="status">
+                        {% for status in application_statuses %}
+                          <option value="{{ status }}" {% if status == a.status %}selected{% endif %}>{{ status }}</option>
+                        {% endfor %}
+                      </select>
+                      <input class="c12" name="manager_note" value="{{ a.manager_note or '' }}" placeholder="Комментарий менеджера">
+                      <button class="c12" type="submit">Сохранить</button>
+                    </form>
+                  </td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        {% else %}
+          <div class="muted">Заявок пока нет.</div>
+        {% endif %}
+      </section>
+
+      <section>
+        <h2>Активные подключения менеджера</h2>
+        {% if support_sessions %}
+          <table>
+            <thead>
+              <tr><th>ID</th><th>Telegram</th><th>Support chat</th><th>Manager</th><th>Открыта</th></tr>
+            </thead>
+            <tbody>
+              {% for s in support_sessions %}
+                <tr>
+                  <td>{{ s.id }}</td>
+                  <td>{{ s.telegram_id }}</td>
+                  <td>{{ s.support_chat_id }}</td>
+                  <td>{{ s.manager_telegram_id or '-' }}</td>
+                  <td>{{ s.opened_at }}</td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        {% else %}
+          <div class="muted">Нет активных сессий.</div>
+        {% endif %}
+      </section>
+
       <div class="grid-2">
         <section>
           <h2>Заявки на доступ</h2>

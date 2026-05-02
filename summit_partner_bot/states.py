@@ -20,5 +20,15 @@ class AccessRequestFlow(StatesGroup):
 
 
 class NavigationFlow(StatesGroup):
+    waiting_category_choice = State()
+    waiting_subcategory_choice = State()
     waiting_link_choice = State()
     waiting_material_choice = State()
+
+
+class BoothBookingFlow(StatesGroup):
+    waiting_booth = State()
+    waiting_company = State()
+    waiting_contact_name = State()
+    waiting_phone = State()
+    waiting_comment = State()

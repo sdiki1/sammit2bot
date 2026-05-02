@@ -38,6 +38,14 @@ SECTION_INFLUENCER_MATERIALS = "influencer_materials"
 
 LEGACY_SECTION_USEFUL_LINKS = "useful_links"
 
+APPLICATION_STATUS_NEW = "new"
+APPLICATION_STATUS_IN_PROGRESS = "in_progress"
+APPLICATION_STATUS_DONE = "done"
+APPLICATION_STATUS_REJECTED = "rejected"
+
+SUPPORT_STATUS_ACTIVE = "active"
+SUPPORT_STATUS_CLOSED = "closed"
+
 
 def normalize_code(code: str) -> str:
     return code.strip().upper()
@@ -176,11 +184,41 @@ class Database:
                 CREATE TABLE IF NOT EXISTS content_links (
                     id BIGSERIAL PRIMARY KEY,
                     section TEXT NOT NULL,
+                    category TEXT,
+                    subcategory TEXT,
                     title TEXT NOT NULL,
                     url TEXT NOT NULL,
                     position INTEGER NOT NULL DEFAULT 100,
                     is_active BOOLEAN NOT NULL DEFAULT TRUE,
                     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                );
+
+                CREATE TABLE IF NOT EXISTS applications (
+                    id BIGSERIAL PRIMARY KEY,
+                    token TEXT NOT NULL UNIQUE,
+                    telegram_id BIGINT,
+                    role TEXT NOT NULL DEFAULT 'partner',
+                    source TEXT NOT NULL DEFAULT 'site',
+                    status TEXT NOT NULL DEFAULT 'new',
+                    request_text TEXT,
+                    booth_number TEXT,
+                    full_name TEXT,
+                    phone TEXT,
+                    company TEXT,
+                    inn TEXT,
+                    manager_note TEXT,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                );
+
+                CREATE TABLE IF NOT EXISTS support_sessions (
+                    id BIGSERIAL PRIMARY KEY,
+                    telegram_id BIGINT NOT NULL,
+                    support_chat_id BIGINT NOT NULL,
+                    manager_telegram_id BIGINT,
+                    status TEXT NOT NULL DEFAULT 'active',
+                    opened_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    closed_at TIMESTAMPTZ
                 );
 
                 CREATE TABLE IF NOT EXISTS feedback_messages (
@@ -205,6 +243,12 @@ class Database:
                 CREATE INDEX IF NOT EXISTS idx_broadcasts_scheduled_at ON broadcasts(scheduled_at);
                 CREATE INDEX IF NOT EXISTS idx_deliveries_broadcast_id ON broadcast_deliveries(broadcast_id);
                 CREATE INDEX IF NOT EXISTS idx_content_links_section_position ON content_links(section, position, id);
+                CREATE INDEX IF NOT EXISTS idx_applications_status_created ON applications(status, created_at DESC);
+                CREATE INDEX IF NOT EXISTS idx_applications_token ON applications(token);
+                CREATE INDEX IF NOT EXISTS idx_support_sessions_chat ON support_sessions(support_chat_id, status);
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_support_sessions_one_active
+                    ON support_sessions(telegram_id)
+                    WHERE status = 'active';
                 CREATE INDEX IF NOT EXISTS idx_referral_clicks_owner ON referral_clicks(owner_telegram_id);
                 """
             )
@@ -224,21 +268,48 @@ class Database:
             await conn.execute("ALTER TABLE access_codes ADD COLUMN IF NOT EXISTS role TEXT")
             await conn.execute("ALTER TABLE broadcasts ADD COLUMN IF NOT EXISTS target_role TEXT")
             await conn.execute("ALTER TABLE broadcasts ADD COLUMN IF NOT EXISTS image_path TEXT")
+            await conn.execute("ALTER TABLE content_links ADD COLUMN IF NOT EXISTS category TEXT")
+            await conn.execute("ALTER TABLE content_links ADD COLUMN IF NOT EXISTS subcategory TEXT")
+
+            await conn.execute("ALTER TABLE applications ADD COLUMN IF NOT EXISTS telegram_id BIGINT")
+            await conn.execute("ALTER TABLE applications ADD COLUMN IF NOT EXISTS role TEXT")
+            await conn.execute("ALTER TABLE applications ADD COLUMN IF NOT EXISTS source TEXT")
+            await conn.execute("ALTER TABLE applications ADD COLUMN IF NOT EXISTS status TEXT")
+            await conn.execute("ALTER TABLE applications ADD COLUMN IF NOT EXISTS request_text TEXT")
+            await conn.execute("ALTER TABLE applications ADD COLUMN IF NOT EXISTS booth_number TEXT")
+            await conn.execute("ALTER TABLE applications ADD COLUMN IF NOT EXISTS full_name TEXT")
+            await conn.execute("ALTER TABLE applications ADD COLUMN IF NOT EXISTS phone TEXT")
+            await conn.execute("ALTER TABLE applications ADD COLUMN IF NOT EXISTS company TEXT")
+            await conn.execute("ALTER TABLE applications ADD COLUMN IF NOT EXISTS inn TEXT")
+            await conn.execute("ALTER TABLE applications ADD COLUMN IF NOT EXISTS manager_note TEXT")
+            await conn.execute("ALTER TABLE applications ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ")
 
             await conn.execute("UPDATE users SET role = COALESCE(NULLIF(role, ''), 'partner')")
             await conn.execute("UPDATE users SET access_status = COALESCE(NULLIF(access_status, ''), 'approved')")
             await conn.execute("UPDATE access_codes SET role = COALESCE(NULLIF(role, ''), 'partner')")
             await conn.execute("UPDATE broadcasts SET target_role = COALESCE(NULLIF(target_role, ''), 'all')")
+            await conn.execute("UPDATE applications SET role = COALESCE(NULLIF(role, ''), 'partner')")
+            await conn.execute("UPDATE applications SET source = COALESCE(NULLIF(source, ''), 'site')")
+            await conn.execute("UPDATE applications SET status = COALESCE(NULLIF(status, ''), 'new')")
+            await conn.execute("UPDATE applications SET updated_at = COALESCE(updated_at, created_at, NOW())")
 
             await conn.execute("ALTER TABLE users ALTER COLUMN role SET DEFAULT 'partner'")
             await conn.execute("ALTER TABLE users ALTER COLUMN access_status SET DEFAULT 'approved'")
             await conn.execute("ALTER TABLE access_codes ALTER COLUMN role SET DEFAULT 'partner'")
             await conn.execute("ALTER TABLE broadcasts ALTER COLUMN target_role SET DEFAULT 'all'")
+            await conn.execute("ALTER TABLE applications ALTER COLUMN role SET DEFAULT 'partner'")
+            await conn.execute("ALTER TABLE applications ALTER COLUMN source SET DEFAULT 'site'")
+            await conn.execute("ALTER TABLE applications ALTER COLUMN status SET DEFAULT 'new'")
+            await conn.execute("ALTER TABLE applications ALTER COLUMN updated_at SET DEFAULT NOW()")
 
             await conn.execute("ALTER TABLE users ALTER COLUMN role SET NOT NULL")
             await conn.execute("ALTER TABLE users ALTER COLUMN access_status SET NOT NULL")
             await conn.execute("ALTER TABLE access_codes ALTER COLUMN role SET NOT NULL")
             await conn.execute("ALTER TABLE broadcasts ALTER COLUMN target_role SET NOT NULL")
+            await conn.execute("ALTER TABLE applications ALTER COLUMN role SET NOT NULL")
+            await conn.execute("ALTER TABLE applications ALTER COLUMN source SET NOT NULL")
+            await conn.execute("ALTER TABLE applications ALTER COLUMN status SET NOT NULL")
+            await conn.execute("ALTER TABLE applications ALTER COLUMN updated_at SET NOT NULL")
 
             constraints = await conn.fetch(
                 """
@@ -696,6 +767,8 @@ class Database:
         url: str,
         position: int = 100,
         is_active: bool = True,
+        category: str | None = None,
+        subcategory: str | None = None,
     ) -> int:
         section_value = section.strip()
         if not section_value:
@@ -703,11 +776,13 @@ class Database:
         async with self.pool.acquire() as conn:
             row = await conn.fetchrow(
                 """
-                INSERT INTO content_links(section, title, url, position, is_active)
-                VALUES($1, $2, $3, $4, $5)
+                INSERT INTO content_links(section, category, subcategory, title, url, position, is_active)
+                VALUES($1, $2, $3, $4, $5, $6, $7)
                 RETURNING id
                 """,
                 section_value,
+                (category or "").strip() or None,
+                (subcategory or "").strip() or None,
                 title.strip(),
                 url.strip(),
                 position,
@@ -723,15 +798,19 @@ class Database:
         position: int,
         is_active: bool,
         section: str | None = None,
+        category: str | None = None,
+        subcategory: str | None = None,
     ) -> int:
         async with self.pool.acquire() as conn:
             if section is None:
                 status = await conn.execute(
                     """
                     UPDATE content_links
-                    SET title = $1, url = $2, position = $3, is_active = $4
-                    WHERE id = $5
+                    SET category = $1, subcategory = $2, title = $3, url = $4, position = $5, is_active = $6
+                    WHERE id = $7
                     """,
+                    (category or "").strip() or None,
+                    (subcategory or "").strip() or None,
                     title.strip(),
                     url.strip(),
                     position,
@@ -742,10 +821,12 @@ class Database:
                 status = await conn.execute(
                     """
                     UPDATE content_links
-                    SET section = $1, title = $2, url = $3, position = $4, is_active = $5
-                    WHERE id = $6
+                    SET section = $1, category = $2, subcategory = $3, title = $4, url = $5, position = $6, is_active = $7
+                    WHERE id = $8
                     """,
                     section.strip(),
+                    (category or "").strip() or None,
+                    (subcategory or "").strip() or None,
                     title.strip(),
                     url.strip(),
                     position,
@@ -771,19 +852,19 @@ class Database:
             if include_inactive:
                 return await conn.fetch(
                     """
-                    SELECT id, section, title, url, position, is_active, created_at
+                    SELECT id, section, category, subcategory, title, url, position, is_active, created_at
                     FROM content_links
                     WHERE section = $1
-                    ORDER BY position ASC, id ASC
+                    ORDER BY COALESCE(category, '') ASC, COALESCE(subcategory, '') ASC, position ASC, id ASC
                     """,
                     section_value,
                 )
             return await conn.fetch(
                 """
-                SELECT id, section, title, url, position, is_active, created_at
+                SELECT id, section, category, subcategory, title, url, position, is_active, created_at
                 FROM content_links
                 WHERE section = $1 AND is_active = TRUE
-                ORDER BY position ASC, id ASC
+                ORDER BY COALESCE(category, '') ASC, COALESCE(subcategory, '') ASC, position ASC, id ASC
                 """,
                 section_value,
             )
@@ -793,17 +874,17 @@ class Database:
             if include_inactive:
                 return await conn.fetch(
                     """
-                    SELECT id, section, title, url, position, is_active, created_at
+                    SELECT id, section, category, subcategory, title, url, position, is_active, created_at
                     FROM content_links
-                    ORDER BY section ASC, position ASC, id ASC
+                    ORDER BY section ASC, COALESCE(category, '') ASC, COALESCE(subcategory, '') ASC, position ASC, id ASC
                     """
                 )
             return await conn.fetch(
                 """
-                SELECT id, section, title, url, position, is_active, created_at
+                SELECT id, section, category, subcategory, title, url, position, is_active, created_at
                 FROM content_links
                 WHERE is_active = TRUE
-                ORDER BY section ASC, position ASC, id ASC
+                ORDER BY section ASC, COALESCE(category, '') ASC, COALESCE(subcategory, '') ASC, position ASC, id ASC
                 """
             )
 
@@ -840,6 +921,179 @@ class Database:
                 SELECT id, telegram_id, user_role, message_text, source, created_at
                 FROM feedback_messages
                 ORDER BY id DESC
+                LIMIT $1
+                """,
+                limit,
+            )
+
+    async def create_application(
+        self,
+        token: str,
+        role: str,
+        source: str,
+        request_text: str | None,
+        booth_number: str | None,
+        full_name: str | None,
+        phone: str | None,
+        company: str | None,
+        inn: str | None,
+        telegram_id: int | None = None,
+        status: str = APPLICATION_STATUS_NEW,
+    ) -> asyncpg.Record:
+        async with self.pool.acquire() as conn:
+            return await conn.fetchrow(
+                """
+                INSERT INTO applications(
+                    token,
+                    telegram_id,
+                    role,
+                    source,
+                    status,
+                    request_text,
+                    booth_number,
+                    full_name,
+                    phone,
+                    company,
+                    inn,
+                    created_at,
+                    updated_at
+                )
+                VALUES($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NOW(), NOW())
+                RETURNING *
+                """,
+                token.strip(),
+                telegram_id,
+                normalize_role(role),
+                source.strip() or "site",
+                status.strip() or APPLICATION_STATUS_NEW,
+                (request_text or "").strip() or None,
+                (booth_number or "").strip() or None,
+                (full_name or "").strip() or None,
+                (phone or "").strip() or None,
+                (company or "").strip() or None,
+                (inn or "").strip() or None,
+            )
+
+    async def get_application_by_token(self, token: str) -> asyncpg.Record | None:
+        async with self.pool.acquire() as conn:
+            return await conn.fetchrow(
+                "SELECT * FROM applications WHERE token = $1",
+                token.strip(),
+            )
+
+    async def attach_application_telegram(self, application_id: int, telegram_id: int) -> asyncpg.Record | None:
+        async with self.pool.acquire() as conn:
+            return await conn.fetchrow(
+                """
+                UPDATE applications
+                SET telegram_id = $2,
+                    status = CASE WHEN status = 'new' THEN 'in_progress' ELSE status END,
+                    updated_at = NOW()
+                WHERE id = $1
+                RETURNING *
+                """,
+                application_id,
+                telegram_id,
+            )
+
+    async def set_application_status(
+        self,
+        application_id: int,
+        status: str,
+        manager_note: str | None = None,
+    ) -> asyncpg.Record | None:
+        async with self.pool.acquire() as conn:
+            return await conn.fetchrow(
+                """
+                UPDATE applications
+                SET status = $2,
+                    manager_note = NULLIF($3, ''),
+                    updated_at = NOW()
+                WHERE id = $1
+                RETURNING *
+                """,
+                application_id,
+                status.strip() or APPLICATION_STATUS_NEW,
+                (manager_note or "").strip(),
+            )
+
+    async def list_applications(self, limit: int = 200) -> list[asyncpg.Record]:
+        async with self.pool.acquire() as conn:
+            return await conn.fetch(
+                """
+                SELECT *
+                FROM applications
+                ORDER BY created_at DESC, id DESC
+                LIMIT $1
+                """,
+                limit,
+            )
+
+    async def connect_support_session(
+        self,
+        telegram_id: int,
+        support_chat_id: int,
+        manager_telegram_id: int | None,
+    ) -> asyncpg.Record:
+        async with self.pool.acquire() as conn:
+            return await conn.fetchrow(
+                """
+                INSERT INTO support_sessions(
+                    telegram_id,
+                    support_chat_id,
+                    manager_telegram_id,
+                    status,
+                    opened_at,
+                    closed_at
+                )
+                VALUES($1, $2, $3, 'active', NOW(), NULL)
+                ON CONFLICT(telegram_id) WHERE status = 'active'
+                DO UPDATE SET
+                    support_chat_id = EXCLUDED.support_chat_id,
+                    manager_telegram_id = EXCLUDED.manager_telegram_id,
+                    opened_at = NOW(),
+                    closed_at = NULL
+                RETURNING *
+                """,
+                telegram_id,
+                support_chat_id,
+                manager_telegram_id,
+            )
+
+    async def close_support_session(self, telegram_id: int) -> asyncpg.Record | None:
+        async with self.pool.acquire() as conn:
+            return await conn.fetchrow(
+                """
+                UPDATE support_sessions
+                SET status = 'closed',
+                    closed_at = NOW()
+                WHERE telegram_id = $1 AND status = 'active'
+                RETURNING *
+                """,
+                telegram_id,
+            )
+
+    async def get_active_support_session(self, telegram_id: int) -> asyncpg.Record | None:
+        async with self.pool.acquire() as conn:
+            return await conn.fetchrow(
+                """
+                SELECT *
+                FROM support_sessions
+                WHERE telegram_id = $1 AND status = 'active'
+                ORDER BY opened_at DESC
+                LIMIT 1
+                """,
+                telegram_id,
+            )
+
+    async def list_active_support_sessions(self, limit: int = 100) -> list[asyncpg.Record]:
+        async with self.pool.acquire() as conn:
+            return await conn.fetch(
+                """
+                SELECT *
+                FROM support_sessions
+                WHERE status = 'active'
+                ORDER BY opened_at DESC
                 LIMIT $1
                 """,
                 limit,
@@ -1022,7 +1276,12 @@ class Database:
         for item in links:
             section = str(item["section"])
             grouped.setdefault(section, []).append(
-                {"title": str(item["title"]), "url": str(item["url"])}
+                {
+                    "title": str(item["title"]),
+                    "url": str(item["url"]),
+                    "category": str(item["category"] or ""),
+                    "subcategory": str(item["subcategory"] or ""),
+                }
             )
 
         manager_title = settings_map.get("manager_title", "Написать менеджеру")
@@ -1081,6 +1340,11 @@ class Database:
                 await conn.fetchval("SELECT COUNT(*) FROM broadcasts WHERE sent_at IS NULL AND status = 'scheduled'")
             )
             feedback_total = int(await conn.fetchval("SELECT COUNT(*) FROM feedback_messages"))
+            applications_total = int(await conn.fetchval("SELECT COUNT(*) FROM applications"))
+            new_applications = int(await conn.fetchval("SELECT COUNT(*) FROM applications WHERE status = 'new'"))
+            active_support_sessions = int(
+                await conn.fetchval("SELECT COUNT(*) FROM support_sessions WHERE status = 'active'")
+            )
 
         return {
             "users_total": users_total,
@@ -1092,4 +1356,7 @@ class Database:
             "broadcasts_total": broadcasts_total,
             "pending_broadcasts": pending_broadcasts,
             "feedback_total": feedback_total,
+            "applications_total": applications_total,
+            "new_applications": new_applications,
+            "active_support_sessions": active_support_sessions,
         }
