@@ -30,6 +30,7 @@ from summit_partner_bot.db import (
     SECTION_PARTNER_USEFUL_LINKS,
     SECTION_PUBLIC_MENU_LINKS,
     Database,
+    normalize_subcategory,
     normalize_role,
     normalize_target_role,
 )
@@ -323,13 +324,20 @@ def create_app() -> FastAPI:
         request: Request,
         code: str = Form(...),
         role: str = Form(ROLE_PARTNER),
+        subcategory: str = Form(""),
         description: str = Form(""),
         tab: str = Form(TAB_PUBLIC),
     ) -> RedirectResponse:
         maybe_redirect = _require_auth(request)
         if maybe_redirect is not None:
             return maybe_redirect
-        await db.add_or_update_access_code(code=code, role=normalize_role(role), description=description, is_active=True)
+        await db.add_or_update_access_code(
+            code=code,
+            role=normalize_role(role),
+            subcategory=normalize_subcategory(subcategory),
+            description=description,
+            is_active=True,
+        )
         _set_flash(request, "Код сохранён.")
         return _redirect(_dashboard_url(_sanitize_tab(tab)))
 
@@ -536,6 +544,7 @@ def create_app() -> FastAPI:
         request: Request,
         message_text: str = Form(""),
         target_role: str = Form(ROLE_ALL),
+        target_subcategory: str = Form(""),
         delay_minutes: str | None = Form(default="0"),
         broadcast_image: UploadFile | None = File(default=None),
         tab: str = Form(TAB_PUBLIC),
@@ -573,6 +582,7 @@ def create_app() -> FastAPI:
         await db.create_broadcast(
             created_by=0,
             target_role=normalize_target_role(target_role),
+            target_subcategory=normalize_subcategory(target_subcategory),
             message_text=text or None,
             image_path=image_path,
             source_chat_id=None,

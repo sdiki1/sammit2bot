@@ -14,6 +14,10 @@
   - `partner`;
   - `expert`;
   - `influencer`.
+- Произвольные подкатегории пользователей внутри роли:
+  - задаются админом при создании кода доступа;
+  - сохраняются на пользователе после регистрации;
+  - используются для точечных рассылок.
 - Процесс согласования доступа: заявка `pending` -> подтверждение/отклонение админом.
 - Раздельные меню и материалы по ролям.
 - Рассылки:
@@ -91,7 +95,7 @@ docker compose up -d --build
 
 Доступны только для `ADMIN_IDS`.
 
-- `/add_code CODE ROLE описание`
+- `/add_code CODE ROLE [ПОДКАТЕГОРИЯ] | описание`
 - `/disable_code CODE`
 - `/enable_code CODE`
 - `/delete_code CODE`
@@ -100,9 +104,9 @@ docker compose up -d --build
 - `/pending_requests`
 - `/approve_user TELEGRAM_ID`
 - `/reject_user TELEGRAM_ID причина`
-- `/broadcast [all|partner|expert|influencer] Текст`
+- `/broadcast [all|partner|expert|influencer|role:subcategory] Текст`
 - `reply + /broadcast [роль]` для медиа-рассылок
-- `/broadcast_in МИНУТЫ [роль] Текст`
+- `/broadcast_in МИНУТЫ [роль|role:subcategory] Текст`
 - `/broadcast_stats ID`
 - `/connect_user TELEGRAM_ID`
 - `/disconnect_user TELEGRAM_ID`

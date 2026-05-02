@@ -229,18 +229,20 @@
           <form method="post" action="/codes/add" class="row">
             <input type="hidden" name="tab" value="{{ active_tab }}">
             <input type="hidden" name="role" value="{{ default_role }}">
-            <input class="c4" name="code" placeholder="Код" required>
-            <input class="c6" name="description" placeholder="Описание / компания">
+            <input class="c3" name="code" placeholder="Код" required>
+            <input class="c3" name="subcategory" placeholder="Подкатегория">
+            <input class="c4" name="description" placeholder="Описание / компания">
             <button class="c2" type="submit">Создать</button>
           </form>
           <table>
             <thead>
-              <tr><th>Код</th><th>Описание</th><th>Статус</th><th>Действие</th></tr>
+              <tr><th>Код</th><th>Подкатегория</th><th>Описание</th><th>Статус</th><th>Действие</th></tr>
             </thead>
             <tbody>
               {% for c in codes %}
                 <tr>
                   <td>{{ c.code }}</td>
+                  <td>{{ c.subcategory or '-' }}</td>
                   <td>{{ c.description or '-' }}</td>
                   <td>{{ 'Активен' if c.is_active else 'Неактивен' }}</td>
                   <td>
@@ -442,13 +444,14 @@
           {% if pending_users %}
             <table>
               <thead>
-                <tr><th>Telegram</th><th>Роль</th><th>ФИО</th><th>Телефон</th><th>Компания</th><th>ИНН</th><th>Действия</th></tr>
+                <tr><th>Telegram</th><th>Роль</th><th>Подкатегория</th><th>ФИО</th><th>Телефон</th><th>Компания</th><th>ИНН</th><th>Действия</th></tr>
               </thead>
               <tbody>
                 {% for u in pending_users %}
                   <tr>
                     <td>{{ u.telegram_id }}</td>
                     <td>{{ u.role }}</td>
+                    <td>{{ u.subcategory or '-' }}</td>
                     <td>{{ u.full_name or u.first_name or '-' }}</td>
                     <td>{{ u.phone or '-' }}</td>
                     <td>{{ u.company or '-' }}</td>
@@ -486,20 +489,22 @@
                 <option value="{{ target }}">{{ target }}</option>
               {% endfor %}
             </select>
+            <input class="c3" name="target_subcategory" placeholder="Подкатегория (необязательно)">
             <input class="c2" type="number" min="0" name="delay_minutes" value="0">
-            <div class="c5 muted">`0` = сразу, иначе через N минут.</div>
+            <div class="c4 muted">`0` = сразу. Подкатегория фильтрует внутри выбранной роли.</div>
             <button class="c2" type="submit">Создать</button>
           </form>
           <h3>Последние рассылки</h3>
           <table>
             <thead>
-              <tr><th>ID</th><th>Роль</th><th>Статус</th><th>План</th><th>Отправлена</th><th>Контент</th></tr>
+              <tr><th>ID</th><th>Роль</th><th>Подкатегория</th><th>Статус</th><th>План</th><th>Отправлена</th><th>Контент</th></tr>
             </thead>
             <tbody>
               {% for b in broadcasts %}
                 <tr>
                   <td>{{ b.id }}</td>
                   <td>{{ b.target_role }}</td>
+                  <td>{{ b.target_subcategory or '-' }}</td>
                   <td>{{ b.status }}</td>
                   <td>{{ b.scheduled_at or '-' }}</td>
                   <td>{{ b.sent_at or '-' }}</td>
@@ -516,7 +521,7 @@
         <table>
           <thead>
             <tr>
-              <th>ID</th><th>Telegram</th><th>Role</th><th>Status</th><th>Имя</th><th>Телефон</th><th>Компания</th><th>ИНН</th><th>Код</th><th>Рефкод</th><th>Реферер</th><th>Регистрация</th>
+              <th>ID</th><th>Telegram</th><th>Role</th><th>Подкатегория</th><th>Status</th><th>Имя</th><th>Телефон</th><th>Компания</th><th>ИНН</th><th>Код</th><th>Рефкод</th><th>Реферер</th><th>Регистрация</th>
             </tr>
           </thead>
           <tbody>
@@ -525,6 +530,7 @@
                 <td>{{ u.id }}</td>
                 <td>{{ u.telegram_id }}</td>
                 <td>{{ u.role }}</td>
+                <td>{{ u.subcategory or '-' }}</td>
                 <td>{{ u.access_status }}</td>
                 <td>{{ u.full_name or u.first_name or '-' }}</td>
                 <td>{{ u.phone or '-' }}</td>

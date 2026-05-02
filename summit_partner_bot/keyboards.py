@@ -71,7 +71,7 @@ def public_menu_keyboard() -> ReplyKeyboardMarkup:
     )
 
 
-def private_menu_keyboard(role: str) -> ReplyKeyboardMarkup:
+def private_menu_keyboard(role: str, include_public_menu: bool = True) -> ReplyKeyboardMarkup:
     rows = _chunk_buttons([BTN_NEWS, BTN_PROGRAM, BTN_LINKS, BTN_MATERIALS])
 
     if role == ROLE_PARTNER:
@@ -80,7 +80,10 @@ def private_menu_keyboard(role: str) -> ReplyKeyboardMarkup:
     if role == ROLE_INFLUENCER:
         rows.extend(_chunk_buttons([BTN_INFLUENCER_CONDITIONS, BTN_INFLUENCER_APPLICATION]))
 
-    rows.append([KeyboardButton(text=BTN_MANAGER), KeyboardButton(text=BTN_TO_PUBLIC_MENU)])
+    bottom_row = [KeyboardButton(text=BTN_MANAGER)]
+    if include_public_menu:
+        bottom_row.append(KeyboardButton(text=BTN_TO_PUBLIC_MENU))
+    rows.append(bottom_row)
 
     return ReplyKeyboardMarkup(
         keyboard=rows,

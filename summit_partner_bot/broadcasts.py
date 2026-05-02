@@ -30,7 +30,8 @@ async def send_broadcast(bot: Bot, db: Database, broadcast_id: int) -> tuple[int
         return (0, 0)
 
     target_role = normalize_target_role(str(broadcast["target_role"]))
-    user_ids = await db.list_authorized_user_ids(target_role)
+    target_subcategory = str(broadcast["target_subcategory"] or "").strip()
+    user_ids = await db.list_authorized_user_ids(target_role, target_subcategory)
     if not user_ids:
         await db.set_broadcast_sent(broadcast_id, status="sent")
         return (0, 0)

@@ -12,7 +12,7 @@ from aiogram.exceptions import TelegramForbiddenError
 from aiogram.filters import Command, CommandStart
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.storage.memory import MemoryStorage
-from aiogram.types import BufferedInputFile, InlineKeyboardMarkup, Message
+from aiogram.types import BufferedInputFile, InlineKeyboardMarkup, Message, ReplyKeyboardMarkup
 
 from summit_partner_bot.broadcasts import BroadcastScheduler, parse_iso_datetime, send_broadcast
 from summit_partner_bot.config import BotProfile, Settings
@@ -36,7 +36,9 @@ from summit_partner_bot.db import (
     Database,
     normalize_code,
     normalize_role,
+    normalize_subcategory,
     normalize_target_role,
+    parse_target_role_subcategory,
     role_title,
 )
 from summit_partner_bot.keyboards import (
@@ -289,16 +291,16 @@ async def _send_role_bot_transition(message: Message, settings: Settings, role: 
     return True
 
 
-def _parse_broadcast_target(payload: str) -> tuple[str, str]:
+def _parse_broadcast_target(payload: str) -> tuple[str, str, str]:
     text = payload.strip()
     if not text:
-        return (ROLE_ALL, "")
+        return (ROLE_ALL, "", "")
     parts = text.split(maxsplit=1)
-    candidate = normalize_target_role(parts[0])
-    if candidate != ROLE_ALL or parts[0].lower() == ROLE_ALL:
+    candidate, subcategory = parse_target_role_subcategory(parts[0])
+    if candidate != ROLE_ALL or parts[0].lower() == ROLE_ALL or parts[0].lower().startswith(f"{ROLE_ALL}:"):
         body = parts[1].strip() if len(parts) > 1 else ""
-        return (candidate, body)
-    return (ROLE_ALL, text)
+        return (candidate, subcategory, body)
+    return (ROLE_ALL, "", text)
 
 
 async def _send_link_or_file(message: Message, title: str, value: str) -> None:
@@ -333,7 +335,13 @@ async def _show_public_menu(message: Message, content_loader: ContentLoader) -> 
     await message.answer(text, reply_markup=public_menu_keyboard())
 
 
-async def _show_private_menu(message: Message, db: Database, settings: Settings, content_loader: ContentLoader) -> None:
+async def _show_private_menu(
+    message: Message,
+    db: Database,
+    settings: Settings,
+    content_loader: ContentLoader,
+    include_public_menu: bool = True,
+) -> None:
     if not message.from_user:
         return
 
@@ -356,7 +364,7 @@ async def _show_private_menu(message: Message, db: Database, settings: Settings,
         role=role,
         content=content,
     )
-    await message.answer(welcome, reply_markup=private_menu_keyboard(role))
+    await message.answer(welcome, reply_markup=private_menu_keyboard(role, include_public_menu=include_public_menu))
 
 
 async def _deny_access(message: Message, content_loader: ContentLoader) -> None:
@@ -374,6 +382,7 @@ async def _notify_access_request(
     settings: Settings,
     user_id: int,
     role: str,
+    subcategory: str | None,
     full_name: str,
     phone: str,
     company: str | None,
@@ -383,6 +392,7 @@ async def _notify_access_request(
     lines = [
         "🆕 Новая заявка на доступ",
         f"Роль: {role_title(role)} ({role})",
+        f"Подкатегория: {subcategory or '—'}",
         f"Telegram ID: {user_id}",
         f"ФИО: {full_name or '—'}",
         f"Телефон: {phone or '—'}",
@@ -443,10 +453,11 @@ async def _notify_application(
 
 async def _start_access_flow(message: Message, state: FSMContext, code_row: dict | object) -> None:
     role = normalize_role(str(code_row["role"]))
+    subcategory = normalize_subcategory(str(code_row["subcategory"] or ""))
     code = str(code_row["code"])
     description = str(code_row["description"] or "").strip()
 
-    await state.set_data({"requested_role": role, "access_code": code})
+    await state.set_data({"requested_role": role, "requested_subcategory": subcategory, "access_code": code})
 
     if role == ROLE_PARTNER:
         await state.set_state(AccessRequestFlow.waiting_partner_inn)
@@ -523,6 +534,7 @@ async def _complete_request(
 
     data = await state.get_data()
     role = normalize_role(str(data.get("requested_role", ROLE_PARTNER)))
+    subcategory = normalize_subcategory(str(data.get("requested_subcategory", "")))
     code = normalize_code(str(data.get("access_code", "")))
 
     if not code:
@@ -537,6 +549,7 @@ async def _complete_request(
         username=message.from_user.username,
         first_name=message.from_user.first_name,
         role=role,
+        subcategory=subcategory,
         access_code=code,
         full_name=full_name,
         phone=phone,
@@ -550,6 +563,7 @@ async def _complete_request(
         settings=settings,
         user_id=message.from_user.id,
         role=role,
+        subcategory=subcategory,
         full_name=full_name,
         phone=phone,
         company=company,
@@ -607,6 +621,7 @@ async def _continue_application_access_flow(
     await state.set_data(
         {
             "requested_role": role,
+            "requested_subcategory": "",
             "access_code": access_code,
             "partner_inn": inn,
             "partner_company": company,
@@ -673,6 +688,7 @@ async def _handle_application_start(
     settings: Settings,
     content_loader: ContentLoader,
     token: str,
+    include_public_menu: bool = True,
 ) -> bool:
     if not message.from_user:
         return False
@@ -704,7 +720,13 @@ async def _handle_application_start(
 
     user_row = await db.get_user(message.from_user.id)
     if user_row is not None and str(user_row["access_status"]) == STATUS_APPROVED:
-        await _show_private_menu(message, db, settings, content_loader)
+        await _show_private_menu(
+            message,
+            db,
+            settings,
+            content_loader,
+            include_public_menu=include_public_menu,
+        )
         return True
 
     await _continue_application_access_flow(
@@ -723,6 +745,7 @@ async def _ensure_private_user(
     db: Database,
     content_loader: ContentLoader,
     required_role: str | None = None,
+    include_public_menu: bool = True,
 ) -> dict | None:
     if not message.from_user:
         return None
@@ -735,7 +758,7 @@ async def _ensure_private_user(
     if status == STATUS_PENDING:
         await message.answer(
             "⏳ Ваша заявка ещё на согласовании у организатора.",
-            reply_markup=public_menu_keyboard(),
+            reply_markup=public_menu_keyboard() if include_public_menu else None,
         )
         return None
     if status == STATUS_REJECTED:
@@ -743,7 +766,7 @@ async def _ensure_private_user(
         text = "🚫 В доступе отказано."
         if reason:
             text += f"\nПричина: {reason}"
-        await message.answer(text, reply_markup=public_menu_keyboard())
+        await message.answer(text, reply_markup=public_menu_keyboard() if include_public_menu else None)
         return None
     if status != STATUS_APPROVED:
         await _deny_access(message, content_loader)
@@ -753,7 +776,7 @@ async def _ensure_private_user(
     if required_role and role != normalize_role(required_role):
         await message.answer(
             f"🔒 Этот раздел доступен только для роли: {role_title(required_role)}.",
-            reply_markup=private_menu_keyboard(role),
+            reply_markup=private_menu_keyboard(role, include_public_menu=include_public_menu),
         )
         return None
     return dict(user_row)
@@ -913,6 +936,10 @@ async def create_dispatcher(
         is_public=True,
     )
     profile_role = normalize_role(profile.role) if profile.role else None
+    include_public_menu = profile_role is None
+
+    def private_keyboard(role: str) -> ReplyKeyboardMarkup:
+        return private_menu_keyboard(role, include_public_menu=include_public_menu)
 
     dp.message.middleware(RateLimitMiddleware(settings.rate_limit_seconds))
     dp.callback_query.middleware(RateLimitMiddleware(settings.rate_limit_seconds))
@@ -961,6 +988,7 @@ async def create_dispatcher(
                 settings=settings,
                 content_loader=content_loader,
                 token=app_match.group(1),
+                include_public_menu=include_public_menu,
             )
             if handled:
                 return
@@ -976,7 +1004,13 @@ async def create_dispatcher(
                 )
                 return
             await state.clear()
-            await _show_private_menu(message, db, settings, content_loader)
+            await _show_private_menu(
+                message,
+                db,
+                settings,
+                content_loader,
+                include_public_menu=include_public_menu,
+            )
             return
 
         if payload:
@@ -996,7 +1030,7 @@ async def create_dispatcher(
         if user_row is not None and str(user_row["access_status"]) == STATUS_PENDING:
             await message.answer(
                 "⏳ Ваша заявка уже отправлена и ожидает подтверждения организатором.",
-                reply_markup=public_menu_keyboard(),
+                reply_markup=public_menu_keyboard() if include_public_menu else None,
             )
             return
 
@@ -1006,7 +1040,7 @@ async def create_dispatcher(
             if reason:
                 text_out += f"\nПричина: {reason}"
             text_out += "\nДля нового доступа обратитесь к организатору."
-            await message.answer(text_out, reply_markup=public_menu_keyboard())
+            await message.answer(text_out, reply_markup=public_menu_keyboard() if include_public_menu else None)
             return
 
         if profile_role:
@@ -1028,7 +1062,13 @@ async def create_dispatcher(
 
         user_row = await db.get_user(message.from_user.id)
         if user_row is not None and str(user_row["access_status"]) == STATUS_APPROVED:
-            await _show_private_menu(message, db, settings, content_loader)
+            await _show_private_menu(
+                message,
+                db,
+                settings,
+                content_loader,
+                include_public_menu=include_public_menu,
+            )
             return
 
         payload = _extract_command_payload(message.text or "")
@@ -1062,7 +1102,13 @@ async def create_dispatcher(
                     reply_markup=cancel_keyboard(),
                 )
                 return
-            await _show_private_menu(message, db, settings, content_loader)
+            await _show_private_menu(
+                message,
+                db,
+                settings,
+                content_loader,
+                include_public_menu=include_public_menu,
+            )
             return
         if profile_role:
             await state.set_state(AccessRequestFlow.waiting_access_code)
@@ -1078,11 +1124,12 @@ async def create_dispatcher(
     async def cancel_any_flow(message: Message, state: FSMContext) -> None:
         await state.clear()
         if not message.from_user:
-            await _show_public_menu(message, content_loader)
+            if include_public_menu:
+                await _show_public_menu(message, content_loader)
             return
         user_row = await db.get_user(message.from_user.id)
         if user_row is not None and str(user_row["access_status"]) == STATUS_APPROVED:
-            await message.answer("❌ Действие отменено.", reply_markup=private_menu_keyboard(str(user_row["role"])))
+            await message.answer("❌ Действие отменено.", reply_markup=private_keyboard(str(user_row["role"])))
         elif profile_role:
             await message.answer(
                 "❌ Действие отменено. Для входа отправьте код приглашения.",
@@ -1099,8 +1146,14 @@ async def create_dispatcher(
     async def request_access_code(message: Message, state: FSMContext) -> None:
         raw_text = (message.text or "").strip()
         if raw_text in PUBLIC_MENU_BUTTONS:
-            await state.clear()
-            await _show_public_menu(message, content_loader)
+            if include_public_menu:
+                await state.clear()
+                await _show_public_menu(message, content_loader)
+            else:
+                await message.answer(
+                    f"Введите код приглашения для роли «{role_title(profile_role or ROLE_PARTNER)}».",
+                    reply_markup=cancel_keyboard(),
+                )
             return
 
         data = await state.get_data()
@@ -1201,6 +1254,21 @@ async def create_dispatcher(
         user_row = await db.get_user(message.from_user.id)
         is_approved = user_row is not None and str(user_row["access_status"]) == STATUS_APPROVED
 
+        if profile_role:
+            if is_approved and normalize_role(str(user_row["role"])) == profile_role:
+                await message.answer(
+                    "ℹ️ Используйте профильное меню этого бота.",
+                    reply_markup=private_keyboard(str(user_row["role"])),
+                )
+                return
+            await state.set_state(AccessRequestFlow.waiting_access_code)
+            await state.set_data({"entry_role": profile_role})
+            await message.answer(
+                f"Введите код приглашения для роли «{role_title(profile_role)}».",
+                reply_markup=cancel_keyboard(),
+            )
+            return
+
         if text == BTN_FEEDBACK:
             await state.set_state(FeedbackFlow.waiting_for_feedback)
             await message.answer(
@@ -1231,7 +1299,7 @@ async def create_dispatcher(
                 f"Переходов: {stats['clicks']}\n"
                 f"Заявок: {stats['pending']}\n"
                 f"Подтверждено: {stats['approved']}",
-                reply_markup=private_menu_keyboard(str(user_row["role"])),
+                reply_markup=private_keyboard(str(user_row["role"])),
             )
             return
 
@@ -1242,7 +1310,13 @@ async def create_dispatcher(
                     return
 
             if is_approved and normalize_role(str(user_row["role"])) == role:
-                await _show_private_menu(message, db, settings, content_loader)
+                await _show_private_menu(
+                    message,
+                    db,
+                    settings,
+                    content_loader,
+                    include_public_menu=include_public_menu,
+                )
                 return
 
             await state.set_state(AccessRequestFlow.waiting_access_code)
@@ -1297,22 +1371,38 @@ async def create_dispatcher(
 
         await state.clear()
         if user_row is not None and str(user_row["access_status"]) == STATUS_APPROVED:
-            await message.answer("✅ Спасибо! Отзыв отправлен.", reply_markup=private_menu_keyboard(str(user_row["role"])))
+            await message.answer("✅ Спасибо! Отзыв отправлен.", reply_markup=private_keyboard(str(user_row["role"])))
         else:
-            await message.answer("✅ Спасибо! Отзыв отправлен.", reply_markup=public_menu_keyboard())
+            await message.answer(
+                "✅ Спасибо! Отзыв отправлен.",
+                reply_markup=public_menu_keyboard() if include_public_menu else None,
+            )
 
     @router.message(F.text == BTN_TO_PUBLIC_MENU)
     async def go_to_public_menu(message: Message) -> None:
+        if not include_public_menu:
+            if not message.from_user:
+                return
+            user_row = await db.get_user(message.from_user.id)
+            if user_row is not None and str(user_row["access_status"]) == STATUS_APPROVED:
+                await message.answer("🏠 Главное меню.", reply_markup=private_keyboard(str(user_row["role"])))
+                return
+            await message.answer(
+                f"Введите код приглашения для роли «{role_title(profile_role or ROLE_PARTNER)}».",
+                reply_markup=cancel_keyboard(),
+            )
+            return
         await _show_public_menu(message, content_loader)
 
     @router.message(F.text == BTN_NEWS)
     async def show_news(message: Message) -> None:
-        user_row = await _ensure_private_user(message, db, content_loader)
+        user_row = await _ensure_private_user(message, db, content_loader, include_public_menu=include_public_menu)
         if user_row is None:
             return
 
         role = normalize_role(str(user_row["role"]))
-        rows = await db.get_recent_sent_broadcasts(limit=7, role=role)
+        subcategory = normalize_subcategory(str(user_row.get("subcategory") or ""))
+        rows = await db.get_recent_sent_broadcasts(limit=7, role=role, subcategory=subcategory)
         if not rows:
             await message.answer("📢 Пока нет объявлений от организаторов.")
             return
@@ -1333,13 +1423,16 @@ async def create_dispatcher(
                 text = text[:177] + "..."
             target_role = normalize_target_role(str(row["target_role"]))
             target_suffix = "(всем)" if target_role == ROLE_ALL else f"({target_role})"
+            target_subcategory = normalize_subcategory(str(row["target_subcategory"] or ""))
+            if target_subcategory:
+                target_suffix = f"{target_suffix}[{target_subcategory}]"
             lines.append(f"• {stamp} {target_suffix}: {text}")
 
-        await message.answer("\n".join(lines), reply_markup=private_menu_keyboard(role))
+        await message.answer("\n".join(lines), reply_markup=private_keyboard(role))
 
     @router.message(F.text == BTN_PROGRAM)
     async def show_program(message: Message) -> None:
-        user_row = await _ensure_private_user(message, db, content_loader)
+        user_row = await _ensure_private_user(message, db, content_loader, include_public_menu=include_public_menu)
         if user_row is None:
             return
 
@@ -1347,14 +1440,14 @@ async def create_dispatcher(
         content = await content_loader.load()
         markup = _program_keyboard(content)
         if markup is None:
-            await message.answer("📅 Программа пока не опубликована.", reply_markup=private_menu_keyboard(role))
+            await message.answer("📅 Программа пока не опубликована.", reply_markup=private_keyboard(role))
             return
 
         await message.answer("📅 Актуальная программа саммита:", reply_markup=markup)
 
     @router.message(F.text == BTN_LINKS)
     async def show_links(message: Message, state: FSMContext) -> None:
-        user_row = await _ensure_private_user(message, db, content_loader)
+        user_row = await _ensure_private_user(message, db, content_loader, include_public_menu=include_public_menu)
         if user_row is None:
             return
 
@@ -1362,14 +1455,14 @@ async def create_dispatcher(
         content = await content_loader.load()
         items = _get_role_links(content, role, is_materials=False)
         if not items:
-            await message.answer("🔗 Полезные ссылки пока не добавлены.", reply_markup=private_menu_keyboard(role))
+            await message.answer("🔗 Полезные ссылки пока не добавлены.", reply_markup=private_keyboard(role))
             return
 
         await _start_nested_navigation(message, state, role, items, is_materials=False)
 
     @router.message(F.text == BTN_MATERIALS)
     async def show_materials(message: Message, state: FSMContext) -> None:
-        user_row = await _ensure_private_user(message, db, content_loader)
+        user_row = await _ensure_private_user(message, db, content_loader, include_public_menu=include_public_menu)
         if user_row is None:
             return
 
@@ -1377,7 +1470,7 @@ async def create_dispatcher(
         content = await content_loader.load()
         items = _get_role_links(content, role, is_materials=True)
         if not items:
-            await message.answer("📎 Материалы пока не добавлены.", reply_markup=private_menu_keyboard(role))
+            await message.answer("📎 Материалы пока не добавлены.", reply_markup=private_keyboard(role))
             return
 
         await _start_nested_navigation(message, state, role, items, is_materials=True)
@@ -1386,12 +1479,18 @@ async def create_dispatcher(
     async def go_back(message: Message, state: FSMContext) -> None:
         await state.clear()
         if not message.from_user:
-            await _show_public_menu(message, content_loader)
+            if include_public_menu:
+                await _show_public_menu(message, content_loader)
             return
 
         user_row = await db.get_user(message.from_user.id)
         if user_row is not None and str(user_row["access_status"]) == STATUS_APPROVED:
-            await message.answer("🏠 Главное меню.", reply_markup=private_menu_keyboard(str(user_row["role"])))
+            await message.answer("🏠 Главное меню.", reply_markup=private_keyboard(str(user_row["role"])))
+        elif profile_role:
+            await message.answer(
+                f"Введите код приглашения для роли «{role_title(profile_role)}».",
+                reply_markup=cancel_keyboard(),
+            )
         else:
             await message.answer("🏠 Главное меню.", reply_markup=public_menu_keyboard())
 
@@ -1507,7 +1606,13 @@ async def create_dispatcher(
 
     @router.message(F.text == BTN_INFLUENCER_CONDITIONS)
     async def influencer_conditions(message: Message) -> None:
-        user_row = await _ensure_private_user(message, db, content_loader, required_role=ROLE_INFLUENCER)
+        user_row = await _ensure_private_user(
+            message,
+            db,
+            content_loader,
+            required_role=ROLE_INFLUENCER,
+            include_public_menu=include_public_menu,
+        )
         if user_row is None:
             return
 
@@ -1530,7 +1635,13 @@ async def create_dispatcher(
 
     @router.message(F.text == BTN_INFLUENCER_APPLICATION)
     async def influencer_application(message: Message) -> None:
-        user_row = await _ensure_private_user(message, db, content_loader, required_role=ROLE_INFLUENCER)
+        user_row = await _ensure_private_user(
+            message,
+            db,
+            content_loader,
+            required_role=ROLE_INFLUENCER,
+            include_public_menu=include_public_menu,
+        )
         if user_row is None:
             return
 
@@ -1558,7 +1669,13 @@ async def create_dispatcher(
 
     @router.message(F.text == BTN_BOOTH_BOOKING)
     async def start_booth_booking(message: Message, state: FSMContext) -> None:
-        user_row = await _ensure_private_user(message, db, content_loader, required_role=ROLE_PARTNER)
+        user_row = await _ensure_private_user(
+            message,
+            db,
+            content_loader,
+            required_role=ROLE_PARTNER,
+            include_public_menu=include_public_menu,
+        )
         if user_row is None:
             return
 
@@ -1661,12 +1778,12 @@ async def create_dispatcher(
         await state.clear()
         await message.answer(
             "✅ Заявка на бронирование стенда отправлена. Менеджер увидит её в админ-панели.",
-            reply_markup=private_menu_keyboard(ROLE_PARTNER),
+            reply_markup=private_keyboard(ROLE_PARTNER),
         )
 
     @router.message(F.text == BTN_MANAGER)
     async def manager_contact(message: Message, state: FSMContext) -> None:
-        user_row = await _ensure_private_user(message, db, content_loader)
+        user_row = await _ensure_private_user(message, db, content_loader, include_public_menu=include_public_menu)
         if user_row is None:
             return
 
@@ -1692,7 +1809,7 @@ async def create_dispatcher(
         else:
             await message.answer(
                 "🧑‍💼 Контакт менеджера временно недоступен.",
-                reply_markup=private_menu_keyboard(role),
+                reply_markup=private_keyboard(role),
             )
 
     @router.message(SupportFlow.waiting_for_question)
@@ -1700,7 +1817,7 @@ async def create_dispatcher(
         if not message.from_user:
             return
 
-        user_row = await _ensure_private_user(message, db, content_loader)
+        user_row = await _ensure_private_user(message, db, content_loader, include_public_menu=include_public_menu)
         if user_row is None:
             await state.clear()
             return
@@ -1711,7 +1828,7 @@ async def create_dispatcher(
             await state.clear()
             await message.answer(
                 "⚠️ Поддержка не настроена. Обратитесь к организатору.",
-                reply_markup=private_menu_keyboard(role),
+                reply_markup=private_keyboard(role),
             )
             return
 
@@ -1746,12 +1863,12 @@ async def create_dispatcher(
         if delivered_to_support:
             await message.answer(
                 "✅ Сообщение отправлено менеджеру. Ответ поступит в этот чат.",
-                reply_markup=private_menu_keyboard(role),
+                reply_markup=private_keyboard(role),
             )
         else:
             await message.answer(
                 "⚠️ Не удалось доставить вопрос в поддержку. Попробуйте позже.",
-                reply_markup=private_menu_keyboard(role),
+                reply_markup=private_keyboard(role),
             )
 
     @router.message(Command("connect_user"))
@@ -1828,8 +1945,9 @@ async def create_dispatcher(
 
         lines = ["⏳ Заявки на согласовании:"]
         for row in rows:
+            subcategory = f" / {row['subcategory']}" if row["subcategory"] else ""
             lines.append(
-                f"• {row['telegram_id']} | {role_title(str(row['role']))} | "
+                f"• {row['telegram_id']} | {role_title(str(row['role']))}{subcategory} | "
                 f"{row['full_name'] or row['first_name'] or '—'} | {row['phone'] or '—'}"
             )
         text = "\n".join(lines)
@@ -1864,7 +1982,7 @@ async def create_dispatcher(
             await message.bot.send_message(
                 chat_id=telegram_id,
                 text="✅ Ваша заявка подтверждена. Доступ к меню открыт.",
-                reply_markup=private_menu_keyboard(role),
+                reply_markup=private_keyboard(role),
             )
         except Exception:  # noqa: BLE001
             logger.exception("Failed to notify approved user %s", telegram_id)
@@ -1914,19 +2032,28 @@ async def create_dispatcher(
             return
         payload = _extract_command_payload(message.text or "")
         if not payload:
-            await message.answer("Формат: /add_code CODE ROLE описание")
+            await message.answer("Формат: /add_code CODE ROLE [ПОДКАТЕГОРИЯ] | описание")
             return
 
-        parts = payload.split(maxsplit=2)
+        left, separator, right = payload.partition("|")
+        parts = left.strip().split(maxsplit=2)
         if len(parts) < 2:
-            await message.answer("Формат: /add_code CODE ROLE описание")
+            await message.answer("Формат: /add_code CODE ROLE [ПОДКАТЕГОРИЯ] | описание")
             return
 
         code = normalize_code(parts[0])
         role = normalize_role(parts[1])
-        description = parts[2].strip() if len(parts) > 2 else ""
-        await db.add_or_update_access_code(code=code, role=role, description=description, is_active=True)
-        await message.answer(f"Код {code} ({role}) добавлен/обновлён.")
+        subcategory = normalize_subcategory(parts[2]) if len(parts) > 2 else ""
+        description = right.strip() if separator else ""
+        await db.add_or_update_access_code(
+            code=code,
+            role=role,
+            subcategory=subcategory,
+            description=description,
+            is_active=True,
+        )
+        suffix = f", подкатегория: {subcategory}" if subcategory else ""
+        await message.answer(f"Код {code} ({role}{suffix}) добавлен/обновлён.")
 
     @router.message(Command("disable_code"))
     async def admin_disable_code(message: Message) -> None:
@@ -1974,7 +2101,8 @@ async def create_dispatcher(
         for row in rows:
             status = "🟢" if row["is_active"] else "🔴"
             description = row["description"] or "Без описания"
-            lines.append(f"{status} {row['code']} [{row['role']}] — {description}")
+            subcategory = f":{row['subcategory']}" if row["subcategory"] else ""
+            lines.append(f"{status} {row['code']} [{row['role']}{subcategory}] — {description}")
 
         text = "\n".join(lines)
         if len(text) > 3900:
@@ -2000,6 +2128,7 @@ async def create_dispatcher(
             "Проверка кода:\n"
             f"Код: {row['code']}\n"
             f"Роль: {row['role']}\n"
+            f"Подкатегория: {row['subcategory'] or '—'}\n"
             f"Активен: {'да' if row['is_active'] else 'нет'}\n"
             f"Описание: {row['description'] or '—'}\n"
             f"Создан: {row['created_at']}"
@@ -2077,6 +2206,7 @@ async def create_dispatcher(
                 "username",
                 "first_name",
                 "role",
+                "subcategory",
                 "access_status",
                 "access_code",
                 "full_name",
@@ -2101,6 +2231,7 @@ async def create_dispatcher(
                     row["username"] or "",
                     row["first_name"] or "",
                     row["role"] or "",
+                    row["subcategory"] or "",
                     row["access_status"] or "",
                     row["access_code"] or "",
                     row["full_name"] or "",
@@ -2130,7 +2261,7 @@ async def create_dispatcher(
             return
 
         payload = _extract_command_payload(message.text or "")
-        target_role, text_payload = _parse_broadcast_target(payload)
+        target_role, target_subcategory, text_payload = _parse_broadcast_target(payload)
 
         source_chat_id = None
         source_message_id = None
@@ -2141,14 +2272,15 @@ async def create_dispatcher(
         if not text_payload and not source_message_id:
             await message.answer(
                 "Формат:\n"
-                "1) /broadcast [all|partner|expert|influencer] Текст\n"
-                "2) Ответьте на медиа и отправьте /broadcast [роль]"
+                "1) /broadcast [all|partner|expert|influencer|role:subcategory] Текст\n"
+                "2) Ответьте на медиа и отправьте /broadcast [role:subcategory]"
             )
             return
 
         broadcast_id = await db.create_broadcast(
             created_by=message.from_user.id,
             target_role=target_role,
+            target_subcategory=target_subcategory,
             message_text=text_payload or None,
             image_path=None,
             source_chat_id=source_chat_id,
@@ -2161,6 +2293,7 @@ async def create_dispatcher(
             "✅ Рассылка завершена.\n"
             f"ID: {broadcast_id}\n"
             f"Роль: {target_role}\n"
+            f"Подкатегория: {target_subcategory or '—'}\n"
             f"Доставлено: {delivered}\n"
             f"Ошибок: {failed}"
         )
@@ -2177,8 +2310,8 @@ async def create_dispatcher(
         if len(parts) < 2:
             await message.answer(
                 "Формат:\n"
-                "1) /broadcast_in МИНУТЫ [all|partner|expert|influencer] Текст\n"
-                "2) Ответьте на медиа и отправьте /broadcast_in МИНУТЫ [роль]"
+                "1) /broadcast_in МИНУТЫ [all|partner|expert|influencer|role:subcategory] Текст\n"
+                "2) Ответьте на медиа и отправьте /broadcast_in МИНУТЫ [role:subcategory]"
             )
             return
 
@@ -2191,11 +2324,13 @@ async def create_dispatcher(
             return
 
         role = ROLE_ALL
+        subcategory = ""
         payload = ""
         if len(parts) >= 3:
-            candidate = normalize_target_role(parts[2])
-            if candidate != ROLE_ALL or parts[2].lower() == ROLE_ALL:
+            candidate, candidate_subcategory = parse_target_role_subcategory(parts[2])
+            if candidate != ROLE_ALL or parts[2].lower() == ROLE_ALL or parts[2].lower().startswith(f"{ROLE_ALL}:"):
                 role = candidate
+                subcategory = candidate_subcategory
                 payload = parts[3].strip() if len(parts) > 3 else ""
             else:
                 payload = text.split(maxsplit=2)[2].strip() if len(text.split(maxsplit=2)) > 2 else ""
@@ -2214,6 +2349,7 @@ async def create_dispatcher(
         broadcast_id = await db.create_broadcast(
             created_by=message.from_user.id,
             target_role=role,
+            target_subcategory=subcategory,
             message_text=payload or None,
             image_path=None,
             source_chat_id=source_chat_id,
@@ -2227,6 +2363,7 @@ async def create_dispatcher(
             "⏳ Рассылка запланирована.\n"
             f"ID: {broadcast_id}\n"
             f"Роль: {role}\n"
+            f"Подкатегория: {subcategory or '—'}\n"
             f"Время (UTC): {run_at.strftime('%Y-%m-%d %H:%M')}"
         )
 
@@ -2254,6 +2391,7 @@ async def create_dispatcher(
             "Статистика рассылки:\n"
             f"ID: {broadcast_id}\n"
             f"Роль: {row['target_role']}\n"
+            f"Подкатегория: {row['target_subcategory'] or '—'}\n"
             f"Статус: {row['status']}\n"
             f"Отправлено: {row['sent_at'] or 'ещё не отправлена'}\n"
             f"Доставлено: {stats['delivered']}\n"
@@ -2308,7 +2446,8 @@ async def create_dispatcher(
             return
 
         if not message.from_user:
-            await _show_public_menu(message, content_loader)
+            if include_public_menu:
+                await _show_public_menu(message, content_loader)
             return
 
         user_row = await db.get_user(message.from_user.id)
@@ -2342,7 +2481,7 @@ async def create_dispatcher(
         if user_row is not None and str(user_row["access_status"]) == STATUS_APPROVED:
             await message.answer(
                 "ℹ️ Используйте кнопки меню для навигации.",
-                reply_markup=private_menu_keyboard(str(user_row["role"])),
+                reply_markup=private_keyboard(str(user_row["role"])),
             )
             return
 
