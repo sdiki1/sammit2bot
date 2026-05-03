@@ -476,8 +476,8 @@ class Database:
         email: str | None = None,
         company: str | None = None,
         inn: str | None = None,
-        referred_by: int | None = None,
         consent_accepted: bool = False,
+        referred_by: int | None = None,
     ) -> None:
         role = normalize_role(role)
         subcategory_value = normalize_subcategory(subcategory) or None
@@ -508,8 +508,9 @@ class Database:
                     registered_at
                 )
                 VALUES (
-                    $1, $2, $3, $4, $5, 'pending', $6, $7, $8, $9, $10, $11, $12,
-                    CASE WHEN $12 THEN NOW() ELSE NULL END, NOW(), NULL, NULL, NULL, $13, NOW()
+                    $1, $2, $3, $4, $5, 'pending', $6, $7, $8, $9, $10, $11,
+                    $12, CASE WHEN $12 THEN NOW() ELSE NULL END,
+                    NOW(), NULL, NULL, NULL, $13, NOW()
                 )
                 ON CONFLICT(telegram_id) DO UPDATE SET
                     username = EXCLUDED.username,
@@ -802,11 +803,12 @@ class Database:
         async with self.pool.acquire() as conn:
             return await conn.fetch(
                 """
-                SELECT telegram_id, delivered_message_id
+                SELECT telegram_id, delivered_message_id, status
                 FROM broadcast_deliveries
                 WHERE broadcast_id = $1
                   AND status = 'delivered'
                   AND delivered_message_id IS NOT NULL
+                ORDER BY id ASC
                 """,
                 broadcast_id,
             )
@@ -815,7 +817,12 @@ class Database:
         async with self.pool.acquire() as conn:
             if only_unsent:
                 status = await conn.execute(
-                    "DELETE FROM broadcasts WHERE id = $1 AND sent_at IS NULL",
+                    """
+                    DELETE FROM broadcasts
+                    WHERE id = $1
+                      AND sent_at IS NULL
+                      AND status = 'scheduled'
+                    """,
                     broadcast_id,
                 )
             else:

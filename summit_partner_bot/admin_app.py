@@ -130,16 +130,6 @@ def _broadcast_uploads_dir(content_file: Path) -> Path:
     return content_file.resolve().parent / "uploads" / "broadcasts"
 
 
-def _parse_admin_datetime(value: str) -> datetime | None:
-    text = value.strip()
-    if not text:
-        return None
-    parsed = datetime.fromisoformat(text)
-    if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=ZoneInfo("Europe/Moscow"))
-    return parsed.astimezone(timezone.utc)
-
-
 def _bot_link_base(settings: Any) -> str:
     username = settings.partner_bot_username or settings.bot_username
     if username:
@@ -160,6 +150,16 @@ def _guess_upload_suffix(upload: UploadFile) -> str:
     if content_type == "image/webp":
         return ".webp"
     return ""
+
+
+def _parse_admin_datetime(value: str | None) -> datetime | None:
+    text = (value or "").strip()
+    if not text:
+        return None
+    parsed = datetime.fromisoformat(text)
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=ZoneInfo("Europe/Moscow"))
+    return parsed.astimezone(timezone.utc)
 
 
 def create_app() -> FastAPI:
@@ -588,7 +588,11 @@ def create_app() -> FastAPI:
             _set_flash(request, "Укажите текст рассылки или добавьте изображение.")
             return _redirect(_dashboard_url(_sanitize_tab(tab)))
 
-        scheduled_dt = _parse_admin_datetime(scheduled_at) if scheduled_at.strip() else None
+        try:
+            scheduled_dt = _parse_admin_datetime(scheduled_at)
+        except ValueError:
+            _set_flash(request, "Некорректная дата рассылки.")
+            return _redirect(_dashboard_url(_sanitize_tab(tab)))
         minutes = max(_sanitize_int(delay_minutes, 0), 0)
         if scheduled_dt is None:
             scheduled_dt = datetime.now(timezone.utc) + timedelta(minutes=minutes)
@@ -605,7 +609,7 @@ def create_app() -> FastAPI:
             status="scheduled",
         )
         if scheduled_at.strip():
-            _set_flash(request, f"Рассылка запланирована на {scheduled_at}.")
+            _set_flash(request, "Рассылка запланирована на выбранную дату.")
         elif minutes == 0:
             _set_flash(request, "Рассылка создана и будет отправлена в ближайший цикл планировщика.")
         else:
@@ -615,14 +619,24 @@ def create_app() -> FastAPI:
     @app.post("/broadcasts/delete")
     async def delete_broadcast(
         request: Request,
-        broadcast_id: int = Form(...),
-        tab: str = Form(TAB_SYSTEM),
+        broadcast_id: str = Form(...),
+        tab: str = Form(TAB_PUBLIC),
     ) -> RedirectResponse:
         maybe_redirect = _require_auth(request)
         if maybe_redirect is not None:
             return maybe_redirect
-        deleted = await db.delete_broadcast(broadcast_id=broadcast_id, only_unsent=True)
-        _set_flash(request, "Запланированная рассылка удалена." if deleted else "Можно удалить только неотправленную рассылку.")
+
+        try:
+            target_id = int(broadcast_id)
+        except ValueError:
+            _set_flash(request, "ID рассылки должен быть числом.")
+            return _redirect(_dashboard_url(_sanitize_tab(tab)))
+
+        deleted = await db.delete_broadcast(target_id, only_unsent=True)
+        if deleted:
+            _set_flash(request, f"Рассылка #{target_id} удалена из очереди.")
+        else:
+            _set_flash(request, f"Рассылка #{target_id} не найдена или уже была отправлена.")
         return _redirect(_dashboard_url(_sanitize_tab(tab)))
 
     return app

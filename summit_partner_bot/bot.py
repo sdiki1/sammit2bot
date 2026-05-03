@@ -4,6 +4,7 @@ import csv
 import io
 import logging
 import re
+import asyncio
 from datetime import datetime, timedelta, timezone
 from urllib.parse import parse_qs, urlparse
 
@@ -49,6 +50,7 @@ from summit_partner_bot.keyboards import (
     BTN_CANCEL,
     BTN_CHANNEL,
     BTN_CLINIC_BOOST,
+    BTN_CONSENT_ACCEPT,
     BTN_FAQ,
     BTN_FEEDBACK,
     BTN_FOR_EXPERTS,
@@ -63,26 +65,39 @@ from summit_partner_bot.keyboards import (
     BTN_NEWS,
     BTN_PROGRAM,
     BTN_PROGRAM_PUBLIC,
+    BTN_REGISTER_NO_CODE,
     BTN_REFERRAL,
     BTN_ROUTE,
+    BTN_SHARE_CONTACT,
     BTN_SITE,
     BTN_SPEAKERS,
     BTN_TO_PUBLIC_MENU,
     PUBLIC_MENU_BUTTONS,
     cancel_keyboard,
+    code_or_register_keyboard,
+    consent_keyboard,
+    contact_request_keyboard,
     private_menu_keyboard,
     public_menu_keyboard,
     section_keyboard,
     url_keyboard,
 )
 from summit_partner_bot.middlewares import RateLimitMiddleware
-from summit_partner_bot.states import AccessRequestFlow, BoothBookingFlow, FeedbackFlow, NavigationFlow, SupportFlow
+from summit_partner_bot.states import (
+    AccessRequestFlow,
+    BoothBookingFlow,
+    FeedbackFlow,
+    NavigationFlow,
+    NoCodeRegistrationFlow,
+    SupportFlow,
+)
 
 logger = logging.getLogger(__name__)
 USER_MARKER_RE = re.compile(r"#USER_(\d+)")
 REF_START_RE = re.compile(r"^ref_(.+)$", re.IGNORECASE)
 APP_START_RE = re.compile(r"^app_([0-9a-fA-F]{8,64})$", re.IGNORECASE)
 PHONE_RE = re.compile(r"^[+\d][\d\s\-()]{6,}$")
+EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 CAPTION_PREFIX_RE = re.compile(r"^[^0-9A-Za-zА-Яа-яЁё]+")
 
 PUBLIC_LINKABLE_BUTTONS = {
@@ -116,6 +131,9 @@ ALL_MAIN_BUTTONS = set(PUBLIC_MENU_BUTTONS) | {
     BTN_BACK,
     BTN_CANCEL,
     BTN_TO_PUBLIC_MENU,
+    BTN_REGISTER_NO_CODE,
+    BTN_SHARE_CONTACT,
+    BTN_CONSENT_ACCEPT,
 }
 
 
@@ -350,7 +368,7 @@ async def _show_private_menu(
         if include_public_menu:
             await _show_public_menu(message, content_loader)
         else:
-            await message.answer("Для входа отправьте код приглашения.", reply_markup=cancel_keyboard())
+            await message.answer("Для входа отправьте код приглашения или подайте заявку без кода.", reply_markup=code_or_register_keyboard())
         return
 
     await db.update_user_profile(
@@ -388,9 +406,11 @@ async def _notify_access_request(
     subcategory: str | None,
     full_name: str,
     phone: str,
+    email: str | None,
     company: str | None,
     inn: str | None,
     code: str,
+    consent_accepted: bool = False,
 ) -> None:
     lines = [
         "🆕 Новая заявка на доступ",
@@ -399,8 +419,10 @@ async def _notify_access_request(
         f"Telegram ID: {user_id}",
         f"ФИО: {full_name or '—'}",
         f"Телефон: {phone or '—'}",
+        f"Email: {email or '—'}",
         f"Компания: {company or '—'}",
         f"ИНН: {inn or '—'}",
+        f"Согласие: {'да' if consent_accepted else 'нет'}",
         f"Код приглашения: {code}",
         "",
         f"Подтвердить: /approve_user {user_id}",
@@ -427,6 +449,7 @@ async def _notify_application(
     booth_number: str | None,
     full_name: str | None,
     phone: str | None,
+    email: str | None,
     company: str | None,
     inn: str | None,
 ) -> None:
@@ -441,6 +464,7 @@ async def _notify_application(
         f"ИНН: {inn or '—'}",
         f"Контакт: {full_name or '—'}",
         f"Телефон: {phone or '—'}",
+        f"Email: {email or '—'}",
         "",
         request_text or "Сообщение не указано.",
     ]
@@ -529,8 +553,10 @@ async def _complete_request(
     content_loader: ContentLoader,
     full_name: str,
     phone: str,
+    email: str | None = None,
     company: str | None = None,
     inn: str | None = None,
+    consent_accepted: bool = False,
     include_public_menu: bool = True,
 ) -> None:
     if not message.from_user:
@@ -557,8 +583,10 @@ async def _complete_request(
         access_code=code,
         full_name=full_name,
         phone=phone,
+        email=email,
         company=company,
         inn=inn,
+        consent_accepted=consent_accepted,
         referred_by=referred_by,
     )
 
@@ -570,9 +598,11 @@ async def _complete_request(
         subcategory=subcategory,
         full_name=full_name,
         phone=phone,
+        email=email,
         company=company,
         inn=inn,
         code=code,
+        consent_accepted=consent_accepted,
     )
 
     content = await content_loader.load()
@@ -604,6 +634,26 @@ async def _complete_request(
             )
 
 
+async def _start_no_code_registration(message: Message, state: FSMContext, role: str) -> None:
+    if not message.from_user:
+        return
+
+    target_role = normalize_role(role)
+    await state.set_state(NoCodeRegistrationFlow.waiting_contact)
+    await state.set_data(
+        {
+            "requested_role": target_role,
+            "requested_subcategory": "",
+            "access_code": f"NO_CODE_{target_role.upper()}",
+        }
+    )
+    await message.answer(
+        "📝 Подайте заявку без кода.\n"
+        "Сначала поделитесь контактом кнопкой ниже или отправьте номер телефона текстом.",
+        reply_markup=contact_request_keyboard(),
+    )
+
+
 async def _continue_application_access_flow(
     message: Message,
     state: FSMContext,
@@ -620,6 +670,7 @@ async def _continue_application_access_flow(
     access_code = f"APP{application.get('id')}"
     full_name = str(application.get("full_name") or "").strip()
     phone = str(application.get("phone") or "").strip()
+    email = str(application.get("email") or "").strip()
     company = str(application.get("company") or "").strip()
     inn = str(application.get("inn") or "").strip()
 
@@ -632,6 +683,7 @@ async def _continue_application_access_flow(
             "partner_company": company,
             "partner_contact_name": full_name,
             "full_name": full_name,
+            "email": email,
         }
     )
 
@@ -661,6 +713,7 @@ async def _continue_application_access_flow(
             content_loader=content_loader,
             full_name=full_name,
             phone=phone,
+            email=email,
             company=company,
             inn=inn,
             include_public_menu=include_public_menu,
@@ -684,6 +737,7 @@ async def _continue_application_access_flow(
         content_loader=content_loader,
         full_name=full_name,
         phone=phone,
+        email=email,
         include_public_menu=include_public_menu,
     )
 
@@ -1008,7 +1062,7 @@ async def create_dispatcher(
                 await message.answer(
                     f"Этот бот предназначен для роли «{role_title(profile_role)}».\n"
                     "Введите код приглашения для этой роли.",
-                    reply_markup=cancel_keyboard(),
+                    reply_markup=code_or_register_keyboard(),
                 )
                 return
             await state.clear()
@@ -1056,8 +1110,9 @@ async def create_dispatcher(
             await state.set_data({"entry_role": profile_role})
             await message.answer(
                 f"Добро пожаловать в бот для роли «{role_title(profile_role)}».\n"
-                "Введите код приглашения или откройте персональную ссылку от организатора.",
-                reply_markup=cancel_keyboard(),
+                "Введите код приглашения, откройте персональную ссылку от организатора "
+                "или подайте заявку без кода.",
+                reply_markup=code_or_register_keyboard(),
             )
             return
 
@@ -1107,7 +1162,7 @@ async def create_dispatcher(
             if profile_role and normalize_role(str(user_row["role"])) != profile_role:
                 await message.answer(
                     f"Этот бот предназначен для роли «{role_title(profile_role)}».",
-                    reply_markup=cancel_keyboard(),
+                    reply_markup=code_or_register_keyboard(),
                 )
                 return
             await _show_private_menu(
@@ -1123,7 +1178,7 @@ async def create_dispatcher(
             await state.set_data({"entry_role": profile_role})
             await message.answer(
                 f"Введите код приглашения для роли «{role_title(profile_role)}».",
-                reply_markup=cancel_keyboard(),
+                reply_markup=code_or_register_keyboard(),
             )
             return
         await _show_public_menu(message, content_loader)
@@ -1141,7 +1196,7 @@ async def create_dispatcher(
         elif profile_role:
             await message.answer(
                 "❌ Действие отменено. Для входа отправьте код приглашения.",
-                reply_markup=cancel_keyboard(),
+                reply_markup=code_or_register_keyboard(),
             )
         else:
             await message.answer("❌ Действие отменено.", reply_markup=public_menu_keyboard())
@@ -1149,6 +1204,13 @@ async def create_dispatcher(
     @router.message(F.text == BTN_CANCEL)
     async def cancel_any_flow_btn(message: Message, state: FSMContext) -> None:
         await cancel_any_flow(message, state)
+
+    @router.message(F.text == BTN_REGISTER_NO_CODE)
+    async def start_no_code_registration(message: Message, state: FSMContext) -> None:
+        if not profile_role:
+            await message.answer("Выберите нужную роль в главном меню.", reply_markup=public_menu_keyboard())
+            return
+        await _start_no_code_registration(message, state, profile_role)
 
     @router.message(AccessRequestFlow.waiting_access_code)
     async def request_access_code(message: Message, state: FSMContext) -> None:
@@ -1160,7 +1222,7 @@ async def create_dispatcher(
             else:
                 await message.answer(
                     f"Введите код приглашения для роли «{role_title(profile_role or ROLE_PARTNER)}».",
-                    reply_markup=cancel_keyboard(),
+                    reply_markup=code_or_register_keyboard(),
                 )
             return
 
@@ -1169,12 +1231,135 @@ async def create_dispatcher(
         if data.get("entry_role"):
             expected_role = normalize_role(str(data["entry_role"]))
 
+        if raw_text == BTN_REGISTER_NO_CODE:
+            await _start_no_code_registration(message, state, expected_role or profile_role or ROLE_PARTNER)
+            return
+
         await _process_access_code_input(
             message=message,
             state=state,
             db=db,
             raw_input=raw_text,
             expected_role=expected_role,
+        )
+
+    @router.message(NoCodeRegistrationFlow.waiting_contact)
+    async def no_code_contact(message: Message, state: FSMContext) -> None:
+        phone = ""
+        if message.contact is not None:
+            if message.contact.user_id and message.from_user and message.contact.user_id != message.from_user.id:
+                await message.answer("⚠️ Отправьте свой контакт или введите номер телефона текстом.")
+                return
+            phone = message.contact.phone_number or ""
+        else:
+            phone = (message.text or "").strip()
+
+        if not PHONE_RE.match(phone):
+            await message.answer(
+                "⚠️ Неверный формат телефона. Нажмите кнопку контакта или отправьте номер в формате +79991234567.",
+                reply_markup=contact_request_keyboard(),
+            )
+            return
+
+        await state.update_data(phone=phone.strip())
+        await state.set_state(NoCodeRegistrationFlow.waiting_email)
+        await message.answer("✉️ Укажите email для связи:", reply_markup=cancel_keyboard())
+
+    @router.message(NoCodeRegistrationFlow.waiting_email)
+    async def no_code_email(message: Message, state: FSMContext) -> None:
+        email = (message.text or "").strip()
+        if not EMAIL_RE.match(email):
+            await message.answer("⚠️ Укажите корректный email.")
+            return
+
+        await state.update_data(email=email)
+        await state.set_state(NoCodeRegistrationFlow.waiting_full_name)
+        await message.answer("👤 Укажите ФИО:")
+
+    @router.message(NoCodeRegistrationFlow.waiting_full_name)
+    async def no_code_full_name(message: Message, state: FSMContext) -> None:
+        full_name = (message.text or "").strip()
+        if len(full_name) < 2:
+            await message.answer("⚠️ Введите корректное ФИО.")
+            return
+
+        await state.update_data(full_name=full_name)
+        await state.set_state(NoCodeRegistrationFlow.waiting_company)
+        await message.answer("🏢 Укажите компанию, проект или отправьте «-», если не применимо:")
+
+    @router.message(NoCodeRegistrationFlow.waiting_company)
+    async def no_code_company(message: Message, state: FSMContext) -> None:
+        company = (message.text or "").strip()
+        if company == "-":
+            company = ""
+
+        await state.update_data(company=company)
+        await state.set_state(NoCodeRegistrationFlow.waiting_consent)
+        await message.answer(
+            "Для отправки заявки нужно согласие на обработку персональных данных.",
+            reply_markup=consent_keyboard(),
+        )
+
+    @router.message(NoCodeRegistrationFlow.waiting_consent)
+    async def no_code_consent(message: Message, state: FSMContext) -> None:
+        if not message.from_user:
+            return
+
+        answer = (message.text or "").strip().lower()
+        if message.text != BTN_CONSENT_ACCEPT and "соглас" not in answer:
+            await message.answer("Нажмите «✅ Согласен», чтобы отправить заявку.", reply_markup=consent_keyboard())
+            return
+
+        data = await state.get_data()
+        role = normalize_role(str(data.get("requested_role", profile_role or ROLE_PARTNER)))
+        full_name = str(data.get("full_name", "")).strip()
+        phone = str(data.get("phone", "")).strip()
+        email = str(data.get("email", "")).strip()
+        company = str(data.get("company", "")).strip()
+        token = f"nocode{message.from_user.id}{int(datetime.now(timezone.utc).timestamp())}"
+
+        application = await db.create_application(
+            token=token,
+            role=role,
+            source="no_code",
+            request_text="Заявка без кода из профильного Telegram-бота",
+            booth_number=None,
+            full_name=full_name,
+            phone=phone,
+            email=email,
+            company=company,
+            inn=None,
+            telegram_id=message.from_user.id,
+            status=APPLICATION_STATUS_IN_PROGRESS,
+        )
+        await _notify_application(
+            bot=message.bot,
+            settings=settings,
+            application_id=int(application["id"]),
+            user_id=message.from_user.id,
+            source="no_code",
+            role=role,
+            request_text="Заявка без кода из профильного Telegram-бота",
+            booth_number=None,
+            full_name=full_name,
+            phone=phone,
+            email=email,
+            company=company,
+            inn=None,
+        )
+
+        await _complete_request(
+            message=message,
+            state=state,
+            db=db,
+            settings=settings,
+            content_loader=content_loader,
+            full_name=full_name,
+            phone=phone,
+            email=email,
+            company=company,
+            consent_accepted=True,
+            include_public_menu=include_public_menu,
         )
 
     @router.message(AccessRequestFlow.waiting_partner_inn)
@@ -1275,7 +1460,7 @@ async def create_dispatcher(
             await state.set_data({"entry_role": profile_role})
             await message.answer(
                 f"Введите код приглашения для роли «{role_title(profile_role)}».",
-                reply_markup=cancel_keyboard(),
+                reply_markup=code_or_register_keyboard(),
             )
             return
 
@@ -1399,7 +1584,7 @@ async def create_dispatcher(
                 return
             await message.answer(
                 f"Введите код приглашения для роли «{role_title(profile_role or ROLE_PARTNER)}».",
-                reply_markup=cancel_keyboard(),
+                reply_markup=code_or_register_keyboard(),
             )
             return
         await _show_public_menu(message, content_loader)
@@ -1499,7 +1684,7 @@ async def create_dispatcher(
         elif profile_role:
             await message.answer(
                 f"Введите код приглашения для роли «{role_title(profile_role)}».",
-                reply_markup=cancel_keyboard(),
+                reply_markup=code_or_register_keyboard(),
             )
         else:
             await message.answer("🏠 Главное меню.", reply_markup=public_menu_keyboard())
@@ -1782,6 +1967,7 @@ async def create_dispatcher(
             booth_number=str(data.get("booking_booth", "")),
             full_name=str(data.get("booking_contact_name", "")),
             phone=str(data.get("booking_phone", "")),
+            email=None,
             company=str(data.get("booking_company", "")),
             inn=str(data.get("booking_inn", "")),
         )
@@ -2221,8 +2407,11 @@ async def create_dispatcher(
                 "access_code",
                 "full_name",
                 "phone",
+                "email",
                 "company",
                 "inn",
+                "consent_accepted",
+                "consent_accepted_at",
                 "requested_at",
                 "approved_at",
                 "approved_by",
@@ -2246,8 +2435,11 @@ async def create_dispatcher(
                     row["access_code"] or "",
                     row["full_name"] or "",
                     row["phone"] or "",
+                    row["email"] or "",
                     row["company"] or "",
                     row["inn"] or "",
+                    row["consent_accepted"] or "",
+                    row["consent_accepted_at"] or "",
                     row["requested_at"] or "",
                     row["approved_at"] or "",
                     row["approved_by"] or "",
@@ -2408,6 +2600,60 @@ async def create_dispatcher(
             f"Ошибок: {stats['failed']}"
         )
 
+    @router.message(Command("delete_broadcast"))
+    async def admin_delete_broadcast(message: Message) -> None:
+        if not _is_admin(message, settings):
+            return
+
+        payload = _extract_command_payload(message.text or "")
+        if not payload:
+            await message.answer("Формат: /delete_broadcast ID")
+            return
+
+        try:
+            broadcast_id = int(payload.split()[0])
+        except ValueError:
+            await message.answer("ID рассылки должен быть числом.")
+            return
+
+        row = await db.get_broadcast(broadcast_id)
+        if row is None:
+            await message.answer("Рассылка не найдена.")
+            return
+
+        if row["sent_at"] is None and str(row["status"]) == "scheduled":
+            deleted = await db.delete_broadcast(broadcast_id, only_unsent=True)
+            if deleted:
+                await message.answer(f"Рассылка #{broadcast_id} удалена из очереди.")
+            else:
+                await message.answer("Не удалось удалить рассылку из очереди.")
+            return
+
+        deliveries = await db.list_broadcast_deliveries(broadcast_id)
+        if not deliveries:
+            await message.answer("Нет сохранённых доставленных сообщений для удаления.")
+            return
+
+        deleted_count = 0
+        failed_count = 0
+        for delivery in deliveries:
+            try:
+                await bot.delete_message(
+                    chat_id=int(delivery["telegram_id"]),
+                    message_id=int(delivery["delivered_message_id"]),
+                )
+                deleted_count += 1
+            except Exception:  # noqa: BLE001
+                failed_count += 1
+            await asyncio.sleep(0.04)
+
+        await message.answer(
+            "Удаление сообщений рассылки завершено.\n"
+            f"ID: {broadcast_id}\n"
+            f"Удалено: {deleted_count}\n"
+            f"Ошибок: {failed_count}"
+        )
+
     @router.message(
         lambda message: (
             message.reply_to_message is not None
@@ -2513,7 +2759,7 @@ async def create_dispatcher(
             await state.set_data({"entry_role": profile_role})
             await message.answer(
                 f"Введите код приглашения для роли «{role_title(profile_role)}».",
-                reply_markup=cancel_keyboard(),
+                reply_markup=code_or_register_keyboard(),
             )
             return
 

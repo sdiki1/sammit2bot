@@ -46,24 +46,20 @@ async def send_broadcast(bot: Bot, db: Database, broadcast_id: int) -> tuple[int
 
     for user_id in user_ids:
         try:
-            delivered_message_id: int | None = None
             if source_chat_id and source_message_id:
-                result = await bot.copy_message(
+                sent_message = await bot.copy_message(
                     chat_id=user_id,
                     from_chat_id=source_chat_id,
                     message_id=source_message_id,
                 )
-                delivered_message_id = int(result.message_id)
             elif image_path:
-                result = await bot.send_photo(
+                sent_message = await bot.send_photo(
                     user_id,
                     photo=FSInputFile(str(image_path)),
                     caption=message_text or None,
                 )
-                delivered_message_id = int(result.message_id)
             elif message_text:
-                result = await bot.send_message(user_id, message_text)
-                delivered_message_id = int(result.message_id)
+                sent_message = await bot.send_message(user_id, message_text)
             else:
                 raise RuntimeError("Broadcast message has no payload")
 
@@ -71,35 +67,33 @@ async def send_broadcast(bot: Bot, db: Database, broadcast_id: int) -> tuple[int
                 broadcast_id=broadcast_id,
                 telegram_id=user_id,
                 status="delivered",
-                delivered_message_id=delivered_message_id,
+                delivered_message_id=int(sent_message.message_id),
             )
             delivered += 1
         except TelegramRetryAfter as exc:
             await asyncio.sleep(exc.retry_after)
             try:
-                delivered_message_id = None
                 if source_chat_id and source_message_id:
-                    result = await bot.copy_message(
+                    sent_message = await bot.copy_message(
                         chat_id=user_id,
                         from_chat_id=source_chat_id,
                         message_id=source_message_id,
                     )
-                    delivered_message_id = int(result.message_id)
                 elif image_path:
-                    result = await bot.send_photo(
+                    sent_message = await bot.send_photo(
                         user_id,
                         photo=FSInputFile(str(image_path)),
                         caption=message_text or None,
                     )
-                    delivered_message_id = int(result.message_id)
                 elif message_text:
-                    result = await bot.send_message(user_id, message_text)
-                    delivered_message_id = int(result.message_id)
+                    sent_message = await bot.send_message(user_id, message_text)
+                else:
+                    raise RuntimeError("Broadcast message has no payload")
                 await db.add_delivery(
                     broadcast_id=broadcast_id,
                     telegram_id=user_id,
                     status="delivered",
-                    delivered_message_id=delivered_message_id,
+                    delivered_message_id=int(sent_message.message_id),
                 )
                 delivered += 1
             except Exception as err:  # noqa: BLE001

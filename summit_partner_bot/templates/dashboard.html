@@ -378,7 +378,7 @@
         {% if applications %}
           <table>
             <thead>
-              <tr><th>ID</th><th>Источник</th><th>Статус</th><th>Telegram</th><th>Стенд</th><th>Компания</th><th>Контакт</th><th>Телефон</th><th>Сообщение</th><th>Действие</th></tr>
+              <tr><th>ID</th><th>Источник</th><th>Статус</th><th>Telegram</th><th>Стенд</th><th>Компания</th><th>Контакт</th><th>Телефон</th><th>Email</th><th>Сообщение</th><th>Действие</th></tr>
             </thead>
             <tbody>
               {% for a in applications %}
@@ -391,6 +391,7 @@
                   <td>{{ a.company or '-' }}{% if a.inn %}<br><span class="muted">ИНН {{ a.inn }}</span>{% endif %}</td>
                   <td>{{ a.full_name or '-' }}</td>
                   <td>{{ a.phone or '-' }}</td>
+                  <td>{{ a.email or '-' }}</td>
                   <td>{{ a.request_text or '-' }}</td>
                   <td>
                     <form method="post" action="/applications/status" class="row">
@@ -444,7 +445,7 @@
           {% if pending_users %}
             <table>
               <thead>
-                <tr><th>Telegram</th><th>Роль</th><th>Подкатегория</th><th>ФИО</th><th>Телефон</th><th>Компания</th><th>ИНН</th><th>Действия</th></tr>
+                <tr><th>Telegram</th><th>Роль</th><th>Подкатегория</th><th>ФИО</th><th>Телефон</th><th>Email</th><th>Компания</th><th>ИНН</th><th>Согласие</th><th>Действия</th></tr>
               </thead>
               <tbody>
                 {% for u in pending_users %}
@@ -454,8 +455,10 @@
                     <td>{{ u.subcategory or '-' }}</td>
                     <td>{{ u.full_name or u.first_name or '-' }}</td>
                     <td>{{ u.phone or '-' }}</td>
+                    <td>{{ u.email or '-' }}</td>
                     <td>{{ u.company or '-' }}</td>
                     <td>{{ u.inn or '-' }}</td>
+                    <td>{% if u.consent_accepted %}да{% else %}нет{% endif %}</td>
                     <td>
                       <form method="post" action="/users/approve" class="row">
                         <input type="hidden" name="tab" value="{{ active_tab }}">
@@ -491,13 +494,14 @@
             </select>
             <input class="c3" name="target_subcategory" placeholder="Подкатегория (необязательно)">
             <input class="c2" type="number" min="0" name="delay_minutes" value="0">
-            <div class="c4 muted">`0` = сразу. Подкатегория фильтрует внутри выбранной роли.</div>
+            <input class="c3" type="datetime-local" name="scheduled_at">
+            <div class="c5 muted">`0` = сразу. Дата/время задаются по Москве и имеют приоритет над минутами.</div>
             <button class="c2" type="submit">Создать</button>
           </form>
           <h3>Последние рассылки</h3>
           <table>
             <thead>
-              <tr><th>ID</th><th>Роль</th><th>Подкатегория</th><th>Статус</th><th>План</th><th>Отправлена</th><th>Контент</th></tr>
+              <tr><th>ID</th><th>Роль</th><th>Подкатегория</th><th>Статус</th><th>План</th><th>Отправлена</th><th>Контент</th><th>Действие</th></tr>
             </thead>
             <tbody>
               {% for b in broadcasts %}
@@ -509,6 +513,17 @@
                   <td>{{ b.scheduled_at or '-' }}</td>
                   <td>{{ b.sent_at or '-' }}</td>
                   <td>{% if b.image_path %}🖼 {% endif %}{{ (b.message_text or '')[:120] or '-' }}</td>
+                  <td>
+                    {% if not b.sent_at and b.status == 'scheduled' %}
+                      <form method="post" action="/broadcasts/delete" class="row">
+                        <input type="hidden" name="tab" value="{{ active_tab }}">
+                        <input type="hidden" name="broadcast_id" value="{{ b.id }}">
+                        <button class="danger c12" type="submit">Удалить</button>
+                      </form>
+                    {% else %}
+                      <span class="muted">/delete_broadcast {{ b.id }}</span>
+                    {% endif %}
+                  </td>
                 </tr>
               {% endfor %}
             </tbody>
@@ -521,7 +536,7 @@
         <table>
           <thead>
             <tr>
-              <th>ID</th><th>Telegram</th><th>Role</th><th>Подкатегория</th><th>Status</th><th>Имя</th><th>Телефон</th><th>Компания</th><th>ИНН</th><th>Код</th><th>Рефкод</th><th>Реферер</th><th>Регистрация</th>
+              <th>ID</th><th>Telegram</th><th>Role</th><th>Подкатегория</th><th>Status</th><th>Имя</th><th>Телефон</th><th>Email</th><th>Компания</th><th>ИНН</th><th>Согласие</th><th>Код</th><th>Рефкод</th><th>Реферер</th><th>Регистрация</th>
             </tr>
           </thead>
           <tbody>
@@ -534,8 +549,10 @@
                 <td>{{ u.access_status }}</td>
                 <td>{{ u.full_name or u.first_name or '-' }}</td>
                 <td>{{ u.phone or '-' }}</td>
+                <td>{{ u.email or '-' }}</td>
                 <td>{{ u.company or '-' }}</td>
                 <td>{{ u.inn or '-' }}</td>
+                <td>{% if u.consent_accepted %}да{% else %}нет{% endif %}</td>
                 <td>{{ u.access_code or '-' }}</td>
                 <td>{{ u.referral_code or '-' }}</td>
                 <td>{{ u.referred_by or '-' }}</td>
