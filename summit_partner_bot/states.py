@@ -15,8 +15,13 @@ class AccessRequestFlow(StatesGroup):
     waiting_partner_company = State()
     waiting_partner_contact_name = State()
     waiting_partner_phone = State()
+    waiting_partner_email = State()
+    waiting_partner_booth = State()
     waiting_name = State()
     waiting_phone = State()
+    waiting_email = State()
+    waiting_company = State()
+    waiting_consent = State()
 
 
 class NoCodeRegistrationFlow(StatesGroup):
@@ -24,6 +29,8 @@ class NoCodeRegistrationFlow(StatesGroup):
     waiting_email = State()
     waiting_full_name = State()
     waiting_company = State()
+    waiting_inn = State()
+    waiting_booth = State()
     waiting_consent = State()
 
 
@@ -39,4 +46,5 @@ class BoothBookingFlow(StatesGroup):
     waiting_company = State()
     waiting_contact_name = State()
     waiting_phone = State()
+    waiting_email = State()
     waiting_comment = State()

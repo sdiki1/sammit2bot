@@ -238,6 +238,7 @@ def create_app() -> FastAPI:
         inn: str = Form(""),
         full_name: str = Form(""),
         phone: str = Form(""),
+        email: str = Form(""),
     ) -> Any:
         token = uuid4().hex[:24]
         application = await db.create_application(
@@ -248,6 +249,7 @@ def create_app() -> FastAPI:
             booth_number=booth_number,
             full_name=full_name,
             phone=phone,
+            email=email,
             company=company,
             inn=inn,
         )
@@ -275,6 +277,7 @@ def create_app() -> FastAPI:
         users = await db.list_users(limit=300)
         pending_users = await db.list_pending_users(limit=200)
         all_codes = await db.list_access_codes(limit=300)
+        subcategories = await db.list_subcategories()
         broadcasts = await db.list_broadcasts(limit=120)
         feedback_items = await db.list_feedback(limit=120)
         applications = await db.list_applications(limit=200)
@@ -301,6 +304,9 @@ def create_app() -> FastAPI:
             codes = []
         else:
             codes = all_codes
+        subcategories_by_role: dict[str, list[Any]] = {role: [] for role in [ROLE_PARTNER, ROLE_EXPERT, ROLE_INFLUENCER]}
+        for row in subcategories:
+            subcategories_by_role.setdefault(str(row["role"]), []).append(row)
 
         return templates.TemplateResponse(
             request=request,
@@ -312,6 +318,8 @@ def create_app() -> FastAPI:
                 "pending_users": pending_users,
                 "codes": codes,
                 "all_codes": all_codes,
+                "subcategories": subcategories,
+                "subcategories_by_role": subcategories_by_role,
                 "broadcasts": broadcasts,
                 "feedback_items": feedback_items,
                 "applications": applications,
@@ -350,6 +358,34 @@ def create_app() -> FastAPI:
             is_active=True,
         )
         _set_flash(request, "Код сохранён.")
+        return _redirect(_dashboard_url(_sanitize_tab(tab)))
+
+    @app.post("/subcategories/add")
+    async def add_subcategory(
+        request: Request,
+        role: str = Form(ROLE_PARTNER),
+        name: str = Form(...),
+        tab: str = Form(TAB_PUBLIC),
+    ) -> RedirectResponse:
+        maybe_redirect = _require_auth(request)
+        if maybe_redirect is not None:
+            return maybe_redirect
+        subcategory_id = await db.add_subcategory(role=normalize_role(role), name=name)
+        _set_flash(request, "Подкатегория создана." if subcategory_id else "Укажите название подкатегории.")
+        return _redirect(_dashboard_url(_sanitize_tab(tab)))
+
+    @app.post("/subcategories/delete")
+    async def delete_subcategory(
+        request: Request,
+        role: str = Form(ROLE_PARTNER),
+        name: str = Form(...),
+        tab: str = Form(TAB_PUBLIC),
+    ) -> RedirectResponse:
+        maybe_redirect = _require_auth(request)
+        if maybe_redirect is not None:
+            return maybe_redirect
+        deleted = await db.delete_subcategory(role=normalize_role(role), name=name)
+        _set_flash(request, "Подкатегория удалена." if deleted else "Подкатегория не найдена.")
         return _redirect(_dashboard_url(_sanitize_tab(tab)))
 
     @app.post("/codes/status")
@@ -597,23 +633,38 @@ def create_app() -> FastAPI:
         if scheduled_dt is None:
             scheduled_dt = datetime.now(timezone.utc) + timedelta(minutes=minutes)
 
-        await db.create_broadcast(
-            created_by=0,
-            target_role=normalize_target_role(target_role),
-            target_subcategory=normalize_subcategory(target_subcategory),
-            message_text=text or None,
-            image_path=image_path,
-            source_chat_id=None,
-            source_message_id=None,
-            scheduled_at=scheduled_dt,
-            status="scheduled",
-        )
-        if scheduled_at.strip():
-            _set_flash(request, "Рассылка запланирована на выбранную дату.")
+        normalized_role = normalize_target_role(target_role)
+        normalized_subcategory = normalize_subcategory(target_subcategory)
+        broadcast_targets = [normalized_role]
+        if normalized_role == ROLE_ALL:
+            broadcast_targets = [ROLE_PARTNER, ROLE_EXPERT, ROLE_INFLUENCER]
+
+        recipients_count = 0
+        broadcast_ids: list[int] = []
+        for role_target in broadcast_targets:
+            recipients_count += len(await db.list_authorized_user_ids(role_target, normalized_subcategory))
+            broadcast_ids.append(
+                await db.create_broadcast(
+                    created_by=0,
+                    target_role=role_target,
+                    target_subcategory=normalized_subcategory,
+                    sender_role=role_target,
+                    message_text=text or None,
+                    image_path=image_path,
+                    source_chat_id=None,
+                    source_message_id=None,
+                    scheduled_at=scheduled_dt,
+                    status="scheduled",
+                )
+            )
+        if recipients_count == 0:
+            _set_flash(request, "Рассылка создана, но получателей сейчас 0. Проверьте активные доступы и подкатегорию.")
+        elif scheduled_at.strip():
+            _set_flash(request, f"Рассылка запланирована на выбранную дату. Получателей: {recipients_count}. ID: {', '.join(map(str, broadcast_ids))}.")
         elif minutes == 0:
-            _set_flash(request, "Рассылка создана и будет отправлена в ближайший цикл планировщика.")
+            _set_flash(request, f"Рассылка создана и будет отправлена в ближайший цикл планировщика. Получателей: {recipients_count}. ID: {', '.join(map(str, broadcast_ids))}.")
         else:
-            _set_flash(request, f"Рассылка запланирована через {minutes} мин.")
+            _set_flash(request, f"Рассылка запланирована через {minutes} мин. Получателей: {recipients_count}. ID: {', '.join(map(str, broadcast_ids))}.")
         return _redirect(_dashboard_url(_sanitize_tab(tab)))
 
     @app.post("/broadcasts/delete")

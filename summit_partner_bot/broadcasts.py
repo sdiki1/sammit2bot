@@ -9,7 +9,7 @@ from aiogram import Bot
 from aiogram.exceptions import TelegramForbiddenError, TelegramRetryAfter
 from aiogram.types import FSInputFile
 
-from summit_partner_bot.db import Database, normalize_target_role
+from summit_partner_bot.db import Database, normalize_role, normalize_target_role
 
 logger = logging.getLogger(__name__)
 
@@ -33,7 +33,13 @@ async def send_broadcast(bot: Bot, db: Database, broadcast_id: int) -> tuple[int
     target_subcategory = str(broadcast["target_subcategory"] or "").strip()
     user_ids = await db.list_authorized_user_ids(target_role, target_subcategory)
     if not user_ids:
-        await db.set_broadcast_sent(broadcast_id, status="sent")
+        await db.set_broadcast_sent(broadcast_id, status="no_recipients")
+        logger.warning(
+            "Broadcast %s has no recipients. role=%s subcategory=%s",
+            broadcast_id,
+            target_role,
+            target_subcategory,
+        )
         return (0, 0)
 
     message_text = broadcast["message_text"]
@@ -135,10 +141,17 @@ async def send_broadcast(bot: Bot, db: Database, broadcast_id: int) -> tuple[int
 
 
 class BroadcastScheduler:
-    def __init__(self, bot: Bot, db: Database, poll_interval_seconds: int = 10) -> None:
+    def __init__(
+        self,
+        bot: Bot,
+        db: Database,
+        poll_interval_seconds: int = 10,
+        sender_role: str | None = None,
+    ) -> None:
         self.bot = bot
         self.db = db
         self.poll_interval_seconds = max(poll_interval_seconds, 3)
+        self.sender_role = normalize_role(sender_role) if sender_role else None
         self.tasks: dict[int, asyncio.Task[None]] = {}
         self._watcher_task: asyncio.Task[None] | None = None
 
@@ -158,7 +171,7 @@ class BroadcastScheduler:
             self._watcher_task = asyncio.create_task(self._watcher())
 
     async def restore(self) -> None:
-        pending = await self.db.get_pending_broadcasts()
+        pending = await self.db.get_pending_broadcasts(sender_role=self.sender_role)
         for row in pending:
             broadcast_id = int(row["id"])
             if broadcast_id in self.tasks:

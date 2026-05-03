@@ -230,10 +230,33 @@
             <input type="hidden" name="tab" value="{{ active_tab }}">
             <input type="hidden" name="role" value="{{ default_role }}">
             <input class="c3" name="code" placeholder="Код" required>
-            <input class="c3" name="subcategory" placeholder="Подкатегория">
+            <select class="c3" name="subcategory">
+              <option value="">Без подкатегории</option>
+              {% for sub in subcategories_by_role.get(default_role, []) %}
+                <option value="{{ sub.name }}">{{ sub.name }}</option>
+              {% endfor %}
+            </select>
             <input class="c4" name="description" placeholder="Описание / компания">
             <button class="c2" type="submit">Создать</button>
           </form>
+          <form method="post" action="/subcategories/add" class="row">
+            <input type="hidden" name="tab" value="{{ active_tab }}">
+            <input type="hidden" name="role" value="{{ default_role }}">
+            <input class="c8" name="name" placeholder="Новая подкатегория для {{ default_role }}" required>
+            <button class="c4" type="submit">Создать подкатегорию</button>
+          </form>
+          {% if subcategories_by_role.get(default_role) %}
+            <div class="muted">Подкатегории:</div>
+            {% for sub in subcategories_by_role.get(default_role) %}
+              <form method="post" action="/subcategories/delete" class="row">
+                <input type="hidden" name="tab" value="{{ active_tab }}">
+                <input type="hidden" name="role" value="{{ default_role }}">
+                <input class="c8" type="text" value="{{ sub.name }}" readonly>
+                <input type="hidden" name="name" value="{{ sub.name }}">
+                <button class="danger c4" type="submit">Удалить</button>
+              </form>
+            {% endfor %}
+          {% endif %}
           <table>
             <thead>
               <tr><th>Код</th><th>Подкатегория</th><th>Описание</th><th>Статус</th><th>Действие</th></tr>
@@ -487,12 +510,21 @@
             <input type="hidden" name="tab" value="{{ active_tab }}">
             <textarea class="c12" name="message_text" placeholder="Текст рассылки или подпись к изображению"></textarea>
             <input class="c6" type="file" name="broadcast_image" accept="image/jpeg,image/png,image/webp">
-            <select class="c3" name="target_role" required>
+            <select class="c3" name="target_role" id="broadcast-target-role" required>
               {% for target in targets %}
                 <option value="{{ target }}">{{ target }}</option>
               {% endfor %}
             </select>
-            <input class="c3" name="target_subcategory" placeholder="Подкатегория (необязательно)">
+            <select class="c3" name="target_subcategory" id="broadcast-target-subcategory">
+              <option value="">Без подкатегории</option>
+              {% for role, items in subcategories_by_role.items() %}
+                <optgroup label="{{ role }}">
+                  {% for sub in items %}
+                    <option value="{{ sub.name }}" data-role="{{ role }}">{{ sub.name }}</option>
+                  {% endfor %}
+                </optgroup>
+              {% endfor %}
+            </select>
             <input class="c2" type="number" min="0" name="delay_minutes" value="0">
             <input class="c3" type="datetime-local" name="scheduled_at">
             <div class="c5 muted">`0` = сразу. Дата/время задаются по Москве и имеют приоритет над минутами.</div>
@@ -501,13 +533,14 @@
           <h3>Последние рассылки</h3>
           <table>
             <thead>
-              <tr><th>ID</th><th>Роль</th><th>Подкатегория</th><th>Статус</th><th>План</th><th>Отправлена</th><th>Контент</th><th>Действие</th></tr>
+              <tr><th>ID</th><th>Роль</th><th>Бот</th><th>Подкатегория</th><th>Статус</th><th>План</th><th>Отправлена</th><th>Контент</th><th>Действие</th></tr>
             </thead>
             <tbody>
               {% for b in broadcasts %}
                 <tr>
                   <td>{{ b.id }}</td>
                   <td>{{ b.target_role }}</td>
+                  <td>{{ b.sender_role or '-' }}</td>
                   <td>{{ b.target_subcategory or '-' }}</td>
                   <td>{{ b.status }}</td>
                   <td>{{ b.scheduled_at or '-' }}</td>
@@ -585,5 +618,26 @@
       </section>
     {% endif %}
   </main>
+  <script>
+    const roleSelect = document.getElementById("broadcast-target-role");
+    const subcategorySelect = document.getElementById("broadcast-target-subcategory");
+    if (roleSelect && subcategorySelect) {
+      const allOptions = Array.from(subcategorySelect.querySelectorAll("option[data-role]"));
+      const syncSubcategories = () => {
+        const role = roleSelect.value;
+        allOptions.forEach((option) => {
+          const visible = role === "all" || option.dataset.role === role;
+          option.hidden = !visible;
+          option.disabled = !visible;
+        });
+        const selected = subcategorySelect.selectedOptions[0];
+        if (selected && selected.disabled) {
+          subcategorySelect.value = "";
+        }
+      };
+      roleSelect.addEventListener("change", syncSubcategories);
+      syncSubcategories();
+    }
+  </script>
 </body>
 </html>

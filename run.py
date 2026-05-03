@@ -40,7 +40,7 @@ async def main() -> None:
 
     for profile in settings.bot_profiles:
         bot = Bot(token=profile.token)
-        scheduler = BroadcastScheduler(bot=bot, db=db)
+        scheduler = BroadcastScheduler(bot=bot, db=db, sender_role=profile.role)
         dp = await create_dispatcher(
             bot=bot,
             db=db,
@@ -64,8 +64,8 @@ async def main() -> None:
 
         logging.info("Started polling for %s bot", profile.key)
 
-    if schedulers:
-        await schedulers[0].start()
+    for scheduler in schedulers:
+        await scheduler.start()
 
     try:
         await asyncio.gather(*polling_tasks)

@@ -35,6 +35,7 @@ from summit_partner_bot.db import (
     STATUS_PENDING,
     STATUS_REJECTED,
     Database,
+    is_internal_access_code,
     normalize_code,
     normalize_role,
     normalize_subcategory,
@@ -213,6 +214,20 @@ def _is_admin(message: Message, settings: Settings) -> bool:
     return bool(message.from_user and message.from_user.id in settings.admin_ids)
 
 
+def _is_access_granted(user_row: dict | object | None) -> bool:
+    if user_row is None:
+        return False
+    if str(user_row["access_status"]) != STATUS_APPROVED:
+        return False
+    try:
+        access_code_is_active = bool(user_row["access_code_is_active"])
+    except KeyError:
+        access_code_is_active = False
+    if access_code_is_active:
+        return True
+    return is_internal_access_code(str(user_row["access_code"] or ""))
+
+
 def _format_welcome(first_name: str, summit_name: str, role: str, content: dict) -> str:
     default_template = (
         "👋 Добро пожаловать, {first_name}!\n"
@@ -364,7 +379,7 @@ async def _show_private_menu(
         return
 
     user_row = await db.get_user(message.from_user.id)
-    if user_row is None or str(user_row["access_status"]) != STATUS_APPROVED:
+    if not _is_access_granted(user_row):
         if include_public_menu:
             await _show_public_menu(message, content_loader)
         else:
@@ -557,6 +572,9 @@ async def _complete_request(
     company: str | None = None,
     inn: str | None = None,
     consent_accepted: bool = False,
+    booth_number: str | None = None,
+    application_source: str | None = None,
+    application_text: str | None = None,
     include_public_menu: bool = True,
 ) -> None:
     if not message.from_user:
@@ -604,6 +622,38 @@ async def _complete_request(
         code=code,
         consent_accepted=consent_accepted,
     )
+
+    if application_source:
+        token = f"req{message.from_user.id}{int(datetime.now(timezone.utc).timestamp())}"
+        application = await db.create_application(
+            token=token,
+            role=role,
+            source=application_source,
+            request_text=application_text or "Заявка на доступ из Telegram-бота",
+            booth_number=booth_number,
+            full_name=full_name,
+            phone=phone,
+            email=email,
+            company=company,
+            inn=inn,
+            telegram_id=message.from_user.id,
+            status=APPLICATION_STATUS_IN_PROGRESS,
+        )
+        await _notify_application(
+            bot=message.bot,
+            settings=settings,
+            application_id=int(application["id"]),
+            user_id=message.from_user.id,
+            source=application_source,
+            role=role,
+            request_text=application_text or "Заявка на доступ из Telegram-бота",
+            booth_number=booth_number,
+            full_name=full_name,
+            phone=phone,
+            email=email,
+            company=company,
+            inn=inn,
+        )
 
     content = await content_loader.load()
     await state.clear()
@@ -671,6 +721,7 @@ async def _continue_application_access_flow(
     full_name = str(application.get("full_name") or "").strip()
     phone = str(application.get("phone") or "").strip()
     email = str(application.get("email") or "").strip()
+    booth_number = str(application.get("booth_number") or "").strip()
     company = str(application.get("company") or "").strip()
     inn = str(application.get("inn") or "").strip()
 
@@ -681,9 +732,14 @@ async def _continue_application_access_flow(
             "access_code": access_code,
             "partner_inn": inn,
             "partner_company": company,
+            "company": company,
             "partner_contact_name": full_name,
+            "partner_phone": phone,
             "full_name": full_name,
+            "phone": phone,
             "email": email,
+            "booth_number": booth_number,
+            "skip_application_create": True,
         }
     )
 
@@ -704,19 +760,15 @@ async def _continue_application_access_flow(
             await state.set_state(AccessRequestFlow.waiting_partner_phone)
             await message.answer("📞 Введите телефон контактного лица (пример: +79991234567):", reply_markup=cancel_keyboard())
             return
+        if not email or not EMAIL_RE.match(email):
+            await state.set_state(AccessRequestFlow.waiting_partner_email)
+            await message.answer("✉️ Укажите email для связи:", reply_markup=cancel_keyboard())
+            return
 
-        await _complete_request(
-            message=message,
-            state=state,
-            db=db,
-            settings=settings,
-            content_loader=content_loader,
-            full_name=full_name,
-            phone=phone,
-            email=email,
-            company=company,
-            inn=inn,
-            include_public_menu=include_public_menu,
+        await state.set_state(AccessRequestFlow.waiting_consent)
+        await message.answer(
+            "Для отправки заявки нужно согласие на обработку персональных данных.",
+            reply_markup=consent_keyboard(),
         )
         return
 
@@ -728,17 +780,19 @@ async def _continue_application_access_flow(
         await state.set_state(AccessRequestFlow.waiting_phone)
         await message.answer("📞 Введите телефон (пример: +79991234567):", reply_markup=cancel_keyboard())
         return
+    if not email or not EMAIL_RE.match(email):
+        await state.set_state(AccessRequestFlow.waiting_email)
+        await message.answer("✉️ Укажите email для связи:", reply_markup=cancel_keyboard())
+        return
+    if not company:
+        await state.set_state(AccessRequestFlow.waiting_company)
+        await message.answer("🏢 Укажите компанию, проект или отправьте «-», если не применимо:", reply_markup=cancel_keyboard())
+        return
 
-    await _complete_request(
-        message=message,
-        state=state,
-        db=db,
-        settings=settings,
-        content_loader=content_loader,
-        full_name=full_name,
-        phone=phone,
-        email=email,
-        include_public_menu=include_public_menu,
+    await state.set_state(AccessRequestFlow.waiting_consent)
+    await message.answer(
+        "Для отправки заявки нужно согласие на обработку персональных данных.",
+        reply_markup=consent_keyboard(),
     )
 
 
@@ -780,7 +834,7 @@ async def _handle_application_start(
         await message.answer("\n".join(lines))
 
     user_row = await db.get_user(message.from_user.id)
-    if user_row is not None and str(user_row["access_status"]) == STATUS_APPROVED:
+    if _is_access_granted(user_row):
         await _show_private_menu(
             message,
             db,
@@ -830,7 +884,13 @@ async def _ensure_private_user(
             text += f"\nПричина: {reason}"
         await message.answer(text, reply_markup=public_menu_keyboard() if include_public_menu else None)
         return None
-    if status != STATUS_APPROVED:
+    if not _is_access_granted(user_row):
+        if status == STATUS_APPROVED:
+            await message.answer(
+                "🚫 Доступ больше не активен: код приглашения удалён или деактивирован.",
+                reply_markup=public_menu_keyboard() if include_public_menu else None,
+            )
+            return None
         await _deny_access(message, content_loader)
         return None
 
@@ -1055,7 +1115,7 @@ async def create_dispatcher(
             if handled:
                 return
 
-        if user_row is not None and str(user_row["access_status"]) == STATUS_APPROVED:
+        if _is_access_granted(user_row):
             if profile_role and normalize_role(str(user_row["role"])) != profile_role:
                 await state.set_state(AccessRequestFlow.waiting_access_code)
                 await state.set_data({"entry_role": profile_role})
@@ -1124,7 +1184,7 @@ async def create_dispatcher(
             return
 
         user_row = await db.get_user(message.from_user.id)
-        if user_row is not None and str(user_row["access_status"]) == STATUS_APPROVED:
+        if _is_access_granted(user_row):
             await _show_private_menu(
                 message,
                 db,
@@ -1158,7 +1218,7 @@ async def create_dispatcher(
         if not message.from_user:
             return
         user_row = await db.get_user(message.from_user.id)
-        if user_row is not None and str(user_row["access_status"]) == STATUS_APPROVED:
+        if _is_access_granted(user_row):
             if profile_role and normalize_role(str(user_row["role"])) != profile_role:
                 await message.answer(
                     f"Этот бот предназначен для роли «{role_title(profile_role)}».",
@@ -1191,7 +1251,7 @@ async def create_dispatcher(
                 await _show_public_menu(message, content_loader)
             return
         user_row = await db.get_user(message.from_user.id)
-        if user_row is not None and str(user_row["access_status"]) == STATUS_APPROVED:
+        if _is_access_granted(user_row):
             await message.answer("❌ Действие отменено.", reply_markup=private_keyboard(str(user_row["role"])))
         elif profile_role:
             await message.answer(
@@ -1294,6 +1354,38 @@ async def create_dispatcher(
             company = ""
 
         await state.update_data(company=company)
+        data = await state.get_data()
+        role = normalize_role(str(data.get("requested_role", profile_role or ROLE_PARTNER)))
+        if role == ROLE_PARTNER:
+            await state.set_state(NoCodeRegistrationFlow.waiting_inn)
+            await message.answer("🏢 Укажите ИНН компании (10 или 12 цифр) или отправьте «-», если ИНН нет:")
+            return
+
+        await state.set_state(NoCodeRegistrationFlow.waiting_consent)
+        await message.answer(
+            "Для отправки заявки нужно согласие на обработку персональных данных.",
+            reply_markup=consent_keyboard(),
+        )
+
+    @router.message(NoCodeRegistrationFlow.waiting_inn)
+    async def no_code_inn(message: Message, state: FSMContext) -> None:
+        inn = (message.text or "").strip()
+        if inn == "-":
+            inn = ""
+        elif inn and (not inn.isdigit() or len(inn) not in (10, 12)):
+            await message.answer("⚠️ ИНН должен содержать 10 или 12 цифр. Отправьте ИНН или «-».")
+            return
+
+        await state.update_data(inn=inn)
+        await state.set_state(NoCodeRegistrationFlow.waiting_booth)
+        await message.answer("🏗 Укажите интересующий стенд или отправьте «-», если пока не выбрали:")
+
+    @router.message(NoCodeRegistrationFlow.waiting_booth)
+    async def no_code_booth(message: Message, state: FSMContext) -> None:
+        booth = (message.text or "").strip()
+        if booth == "-":
+            booth = ""
+        await state.update_data(booth_number=booth)
         await state.set_state(NoCodeRegistrationFlow.waiting_consent)
         await message.answer(
             "Для отправки заявки нужно согласие на обработку персональных данных.",
@@ -1316,37 +1408,8 @@ async def create_dispatcher(
         phone = str(data.get("phone", "")).strip()
         email = str(data.get("email", "")).strip()
         company = str(data.get("company", "")).strip()
-        token = f"nocode{message.from_user.id}{int(datetime.now(timezone.utc).timestamp())}"
-
-        application = await db.create_application(
-            token=token,
-            role=role,
-            source="no_code",
-            request_text="Заявка без кода из профильного Telegram-бота",
-            booth_number=None,
-            full_name=full_name,
-            phone=phone,
-            email=email,
-            company=company,
-            inn=None,
-            telegram_id=message.from_user.id,
-            status=APPLICATION_STATUS_IN_PROGRESS,
-        )
-        await _notify_application(
-            bot=message.bot,
-            settings=settings,
-            application_id=int(application["id"]),
-            user_id=message.from_user.id,
-            source="no_code",
-            role=role,
-            request_text="Заявка без кода из профильного Telegram-бота",
-            booth_number=None,
-            full_name=full_name,
-            phone=phone,
-            email=email,
-            company=company,
-            inn=None,
-        )
+        inn = str(data.get("inn", "")).strip()
+        booth_number = str(data.get("booth_number", "")).strip()
 
         await _complete_request(
             message=message,
@@ -1358,7 +1421,11 @@ async def create_dispatcher(
             phone=phone,
             email=email,
             company=company,
+            inn=inn,
             consent_accepted=True,
+            booth_number=booth_number,
+            application_source="no_code",
+            application_text="Заявка без кода из профильного Telegram-бота",
             include_public_menu=include_public_menu,
         )
 
@@ -1398,17 +1465,59 @@ async def create_dispatcher(
         if not PHONE_RE.match(phone):
             await message.answer("⚠️ Неверный формат телефона. Попробуйте снова.")
             return
+        await state.update_data(partner_phone=phone)
+        await state.set_state(AccessRequestFlow.waiting_partner_email)
+        await message.answer("✉️ Укажите email для связи:")
+
+    @router.message(AccessRequestFlow.waiting_partner_email)
+    async def request_partner_email(message: Message, state: FSMContext) -> None:
+        email = (message.text or "").strip()
+        if not EMAIL_RE.match(email):
+            await message.answer("⚠️ Укажите корректный email.")
+            return
+        await state.update_data(email=email)
+        await state.set_state(AccessRequestFlow.waiting_partner_booth)
+        await message.answer("🏗 Укажите интересующий стенд или отправьте «-», если пока не выбрали:")
+
+    @router.message(AccessRequestFlow.waiting_partner_booth)
+    async def request_partner_booth(message: Message, state: FSMContext) -> None:
+        booth_number = (message.text or "").strip()
+        if booth_number == "-":
+            booth_number = ""
+        await state.update_data(booth_number=booth_number)
+        await state.set_state(AccessRequestFlow.waiting_consent)
+        await message.answer(
+            "Для отправки заявки нужно согласие на обработку персональных данных.",
+            reply_markup=consent_keyboard(),
+        )
+
+    @router.message(AccessRequestFlow.waiting_consent)
+    async def request_access_consent(message: Message, state: FSMContext) -> None:
+        answer = (message.text or "").strip().lower()
+        if message.text != BTN_CONSENT_ACCEPT and "соглас" not in answer:
+            await message.answer("Нажмите «✅ Согласен», чтобы отправить заявку.", reply_markup=consent_keyboard())
+            return
         data = await state.get_data()
+        role = normalize_role(str(data.get("requested_role", ROLE_PARTNER)))
+        full_name = str(data.get("partner_contact_name") or data.get("full_name") or "")
+        phone = str(data.get("partner_phone") or data.get("phone") or "")
+        email = str(data.get("email") or "")
+        booth_number = str(data.get("booth_number") or "")
         await _complete_request(
             message=message,
             state=state,
             db=db,
             settings=settings,
             content_loader=content_loader,
-            full_name=str(data.get("partner_contact_name", "")),
+            full_name=full_name,
             phone=phone,
-            company=str(data.get("partner_company", "")),
-            inn=str(data.get("partner_inn", "")),
+            email=email,
+            company=str(data.get("partner_company", "")) if role == ROLE_PARTNER else str(data.get("company", "")),
+            inn=str(data.get("partner_inn", "")) if role == ROLE_PARTNER else None,
+            consent_accepted=True,
+            booth_number=booth_number,
+            application_source=None if data.get("skip_application_create") else "access_request",
+            application_text="Заявка на доступ из Telegram-бота",
             include_public_menu=include_public_menu,
         )
 
@@ -1428,16 +1537,30 @@ async def create_dispatcher(
         if not PHONE_RE.match(phone):
             await message.answer("⚠️ Неверный формат телефона. Попробуйте снова.")
             return
-        data = await state.get_data()
-        await _complete_request(
-            message=message,
-            state=state,
-            db=db,
-            settings=settings,
-            content_loader=content_loader,
-            full_name=str(data.get("full_name", "")),
-            phone=phone,
-            include_public_menu=include_public_menu,
+        await state.update_data(phone=phone)
+        await state.set_state(AccessRequestFlow.waiting_email)
+        await message.answer("✉️ Укажите email для связи:")
+
+    @router.message(AccessRequestFlow.waiting_email)
+    async def request_email(message: Message, state: FSMContext) -> None:
+        email = (message.text or "").strip()
+        if not EMAIL_RE.match(email):
+            await message.answer("⚠️ Укажите корректный email.")
+            return
+        await state.update_data(email=email)
+        await state.set_state(AccessRequestFlow.waiting_company)
+        await message.answer("🏢 Укажите компанию, проект или отправьте «-», если не применимо:")
+
+    @router.message(AccessRequestFlow.waiting_company)
+    async def request_company(message: Message, state: FSMContext) -> None:
+        company = (message.text or "").strip()
+        if company == "-":
+            company = ""
+        await state.update_data(company=company)
+        await state.set_state(AccessRequestFlow.waiting_consent)
+        await message.answer(
+            "Для отправки заявки нужно согласие на обработку персональных данных.",
+            reply_markup=consent_keyboard(),
         )
 
     @router.message(F.text.in_(PUBLIC_MENU_BUTTONS))
@@ -1447,7 +1570,7 @@ async def create_dispatcher(
 
         text = (message.text or "").strip()
         user_row = await db.get_user(message.from_user.id)
-        is_approved = user_row is not None and str(user_row["access_status"]) == STATUS_APPROVED
+        is_approved = _is_access_granted(user_row)
 
         if profile_role:
             if is_approved and normalize_role(str(user_row["role"])) == profile_role:
@@ -1565,7 +1688,7 @@ async def create_dispatcher(
                 logger.exception("Failed to notify feedback to chat %s", chat_id)
 
         await state.clear()
-        if user_row is not None and str(user_row["access_status"]) == STATUS_APPROVED:
+        if _is_access_granted(user_row):
             await message.answer("✅ Спасибо! Отзыв отправлен.", reply_markup=private_keyboard(str(user_row["role"])))
         else:
             await message.answer(
@@ -1579,7 +1702,7 @@ async def create_dispatcher(
             if not message.from_user:
                 return
             user_row = await db.get_user(message.from_user.id)
-            if user_row is not None and str(user_row["access_status"]) == STATUS_APPROVED:
+            if _is_access_granted(user_row):
                 await message.answer("🏠 Главное меню.", reply_markup=private_keyboard(str(user_row["role"])))
                 return
             await message.answer(
@@ -1679,7 +1802,7 @@ async def create_dispatcher(
             return
 
         user_row = await db.get_user(message.from_user.id)
-        if user_row is not None and str(user_row["access_status"]) == STATUS_APPROVED:
+        if _is_access_granted(user_row):
             await message.answer("🏠 Главное меню.", reply_markup=private_keyboard(str(user_row["role"])))
         elif profile_role:
             await message.answer(
@@ -1880,6 +2003,7 @@ async def create_dispatcher(
                 "booking_company": str(user_row.get("company") or ""),
                 "booking_contact_name": str(user_row.get("full_name") or user_row.get("first_name") or ""),
                 "booking_phone": str(user_row.get("phone") or ""),
+                "booking_email": str(user_row.get("email") or ""),
                 "booking_inn": str(user_row.get("inn") or ""),
             }
         )
@@ -1930,6 +2054,16 @@ async def create_dispatcher(
             await message.answer("⚠️ Неверный формат телефона. Попробуйте снова.")
             return
         await state.update_data(booking_phone=phone)
+        await state.set_state(BoothBookingFlow.waiting_email)
+        await message.answer("✉️ Введите email для связи:")
+
+    @router.message(BoothBookingFlow.waiting_email)
+    async def booking_email(message: Message, state: FSMContext) -> None:
+        email = (message.text or "").strip()
+        if not EMAIL_RE.match(email):
+            await message.answer("⚠️ Укажите корректный email.")
+            return
+        await state.update_data(booking_email=email)
         await state.set_state(BoothBookingFlow.waiting_comment)
         await message.answer("✍️ Добавьте комментарий к заявке или отправьте «-», если комментария нет.")
 
@@ -1951,6 +2085,7 @@ async def create_dispatcher(
             booth_number=str(data.get("booking_booth", "")),
             full_name=str(data.get("booking_contact_name", "")),
             phone=str(data.get("booking_phone", "")),
+            email=str(data.get("booking_email", "")),
             company=str(data.get("booking_company", "")),
             inn=str(data.get("booking_inn", "")),
             telegram_id=message.from_user.id,
@@ -1967,7 +2102,7 @@ async def create_dispatcher(
             booth_number=str(data.get("booking_booth", "")),
             full_name=str(data.get("booking_contact_name", "")),
             phone=str(data.get("booking_phone", "")),
-            email=None,
+            email=str(data.get("booking_email", "")),
             company=str(data.get("booking_company", "")),
             inn=str(data.get("booking_inn", "")),
         )
@@ -2464,6 +2599,8 @@ async def create_dispatcher(
 
         payload = _extract_command_payload(message.text or "")
         target_role, target_subcategory, text_payload = _parse_broadcast_target(payload)
+        if profile_role and target_role == ROLE_ALL:
+            target_role = profile_role
 
         source_chat_id = None
         source_message_id = None
@@ -2483,6 +2620,7 @@ async def create_dispatcher(
             created_by=message.from_user.id,
             target_role=target_role,
             target_subcategory=target_subcategory,
+            sender_role=profile_role,
             message_text=text_payload or None,
             image_path=None,
             source_chat_id=source_chat_id,
@@ -2536,6 +2674,8 @@ async def create_dispatcher(
                 payload = parts[3].strip() if len(parts) > 3 else ""
             else:
                 payload = text.split(maxsplit=2)[2].strip() if len(text.split(maxsplit=2)) > 2 else ""
+        if profile_role and role == ROLE_ALL:
+            role = profile_role
 
         source_chat_id = None
         source_message_id = None
@@ -2552,6 +2692,7 @@ async def create_dispatcher(
             created_by=message.from_user.id,
             target_role=role,
             target_subcategory=subcategory,
+            sender_role=profile_role,
             message_text=payload or None,
             image_path=None,
             source_chat_id=source_chat_id,
@@ -2734,7 +2875,7 @@ async def create_dispatcher(
                 await message.answer("⚠️ Не удалось отправить сообщение менеджеру. Попробуйте позже.")
             return
 
-        if user_row is not None and str(user_row["access_status"]) == STATUS_APPROVED:
+        if _is_access_granted(user_row):
             await message.answer(
                 "ℹ️ Используйте кнопки меню для навигации.",
                 reply_markup=private_keyboard(str(user_row["role"])),

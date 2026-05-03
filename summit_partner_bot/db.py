@@ -80,6 +80,11 @@ def parse_target_role_subcategory(value: str | None) -> tuple[str, str]:
     return (normalize_target_role(text), "")
 
 
+def is_internal_access_code(code: str | None) -> bool:
+    value = normalize_code(code or "")
+    return value.startswith("APP") or value.startswith("NO_CODE_")
+
+
 def role_title(role: str) -> str:
     if role == ROLE_EXPERT:
         return "эксперт"
@@ -173,11 +178,20 @@ class Database:
                     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
                 );
 
+                CREATE TABLE IF NOT EXISTS role_subcategories (
+                    id BIGSERIAL PRIMARY KEY,
+                    role TEXT NOT NULL,
+                    name TEXT NOT NULL,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    UNIQUE(role, name)
+                );
+
                 CREATE TABLE IF NOT EXISTS broadcasts (
                     id BIGSERIAL PRIMARY KEY,
                     created_by BIGINT NOT NULL,
                     target_role TEXT NOT NULL DEFAULT 'all',
                     target_subcategory TEXT,
+                    sender_role TEXT,
                     message_text TEXT,
                     image_path TEXT,
                     source_chat_id BIGINT,
@@ -273,6 +287,7 @@ class Database:
                     ON support_sessions(telegram_id)
                     WHERE status = 'active';
                 CREATE INDEX IF NOT EXISTS idx_referral_clicks_owner ON referral_clicks(owner_telegram_id);
+                CREATE INDEX IF NOT EXISTS idx_role_subcategories_role_name ON role_subcategories(role, name);
                 """
             )
 
@@ -294,8 +309,11 @@ class Database:
 
             await conn.execute("ALTER TABLE access_codes ADD COLUMN IF NOT EXISTS role TEXT")
             await conn.execute("ALTER TABLE access_codes ADD COLUMN IF NOT EXISTS subcategory TEXT")
+            await conn.execute("ALTER TABLE role_subcategories ADD COLUMN IF NOT EXISTS role TEXT")
+            await conn.execute("ALTER TABLE role_subcategories ADD COLUMN IF NOT EXISTS name TEXT")
             await conn.execute("ALTER TABLE broadcasts ADD COLUMN IF NOT EXISTS target_role TEXT")
             await conn.execute("ALTER TABLE broadcasts ADD COLUMN IF NOT EXISTS target_subcategory TEXT")
+            await conn.execute("ALTER TABLE broadcasts ADD COLUMN IF NOT EXISTS sender_role TEXT")
             await conn.execute("ALTER TABLE broadcasts ADD COLUMN IF NOT EXISTS image_path TEXT")
             await conn.execute("ALTER TABLE broadcast_deliveries ADD COLUMN IF NOT EXISTS delivered_message_id BIGINT")
             await conn.execute(
@@ -303,6 +321,9 @@ class Database:
             )
             await conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_broadcasts_target ON broadcasts(target_role, target_subcategory)"
+            )
+            await conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_broadcasts_sender ON broadcasts(sender_role, status, sent_at)"
             )
             await conn.execute("ALTER TABLE content_links ADD COLUMN IF NOT EXISTS category TEXT")
             await conn.execute("ALTER TABLE content_links ADD COLUMN IF NOT EXISTS subcategory TEXT")
@@ -325,16 +346,51 @@ class Database:
             await conn.execute("UPDATE users SET access_status = COALESCE(NULLIF(access_status, ''), 'approved')")
             await conn.execute("UPDATE users SET consent_accepted = COALESCE(consent_accepted, FALSE)")
             await conn.execute("UPDATE access_codes SET role = COALESCE(NULLIF(role, ''), 'partner')")
+            await conn.execute("UPDATE role_subcategories SET role = COALESCE(NULLIF(role, ''), 'partner')")
             await conn.execute("UPDATE broadcasts SET target_role = COALESCE(NULLIF(target_role, ''), 'all')")
             await conn.execute("UPDATE applications SET role = COALESCE(NULLIF(role, ''), 'partner')")
             await conn.execute("UPDATE applications SET source = COALESCE(NULLIF(source, ''), 'site')")
             await conn.execute("UPDATE applications SET status = COALESCE(NULLIF(status, ''), 'new')")
             await conn.execute("UPDATE applications SET updated_at = COALESCE(updated_at, created_at, NOW())")
+            await conn.execute(
+                """
+                UPDATE users
+                SET access_status = 'rejected',
+                    rejection_reason = COALESCE(rejection_reason, 'Код доступа удалён'),
+                    approved_at = NULL
+                WHERE access_status = 'approved'
+                  AND access_code IS NOT NULL
+                  AND access_code NOT LIKE 'APP%'
+                  AND access_code NOT LIKE 'NO_CODE_%'
+                  AND NOT EXISTS (
+                      SELECT 1
+                      FROM access_codes
+                      WHERE access_codes.code = users.access_code
+                  )
+                """
+            )
+            await conn.execute(
+                """
+                INSERT INTO role_subcategories(role, name)
+                SELECT DISTINCT normalize_role, subcategory
+                FROM (
+                    SELECT role AS normalize_role, NULLIF(TRIM(subcategory), '') AS subcategory
+                    FROM access_codes
+                    UNION
+                    SELECT role AS normalize_role, NULLIF(TRIM(subcategory), '') AS subcategory
+                    FROM users
+                ) source
+                WHERE subcategory IS NOT NULL
+                  AND normalize_role IN ('partner', 'expert', 'influencer')
+                ON CONFLICT(role, name) DO NOTHING
+                """
+            )
 
             await conn.execute("ALTER TABLE users ALTER COLUMN role SET DEFAULT 'partner'")
             await conn.execute("ALTER TABLE users ALTER COLUMN access_status SET DEFAULT 'approved'")
             await conn.execute("ALTER TABLE users ALTER COLUMN consent_accepted SET DEFAULT FALSE")
             await conn.execute("ALTER TABLE access_codes ALTER COLUMN role SET DEFAULT 'partner'")
+            await conn.execute("ALTER TABLE role_subcategories ALTER COLUMN role SET DEFAULT 'partner'")
             await conn.execute("ALTER TABLE broadcasts ALTER COLUMN target_role SET DEFAULT 'all'")
             await conn.execute("ALTER TABLE applications ALTER COLUMN role SET DEFAULT 'partner'")
             await conn.execute("ALTER TABLE applications ALTER COLUMN source SET DEFAULT 'site'")
@@ -345,6 +401,8 @@ class Database:
             await conn.execute("ALTER TABLE users ALTER COLUMN access_status SET NOT NULL")
             await conn.execute("ALTER TABLE users ALTER COLUMN consent_accepted SET NOT NULL")
             await conn.execute("ALTER TABLE access_codes ALTER COLUMN role SET NOT NULL")
+            await conn.execute("ALTER TABLE role_subcategories ALTER COLUMN role SET NOT NULL")
+            await conn.execute("ALTER TABLE role_subcategories ALTER COLUMN name SET NOT NULL")
             await conn.execute("ALTER TABLE broadcasts ALTER COLUMN target_role SET NOT NULL")
             await conn.execute("ALTER TABLE applications ALTER COLUMN role SET NOT NULL")
             await conn.execute("ALTER TABLE applications ALTER COLUMN source SET NOT NULL")
@@ -369,7 +427,18 @@ class Database:
     async def get_user(self, telegram_id: int) -> asyncpg.Record | None:
         async with self.pool.acquire() as conn:
             return await conn.fetchrow(
-                "SELECT * FROM users WHERE telegram_id = $1",
+                """
+                SELECT
+                    users.*,
+                    EXISTS(
+                        SELECT 1
+                        FROM access_codes
+                        WHERE access_codes.code = users.access_code
+                          AND access_codes.is_active = TRUE
+                    ) AS access_code_is_active
+                FROM users
+                WHERE telegram_id = $1
+                """,
                 telegram_id,
             )
 
@@ -377,13 +446,15 @@ class Database:
         user = await self.get_user(telegram_id)
         if user is None:
             return False
-        return str(user["access_status"]) == STATUS_APPROVED
+        if str(user["access_status"]) != STATUS_APPROVED:
+            return False
+        return bool(user["access_code_is_active"]) or is_internal_access_code(str(user["access_code"] or ""))
 
     async def is_authorized_role(self, telegram_id: int, role: str) -> bool:
         user = await self.get_user(telegram_id)
         if user is None:
             return False
-        if str(user["access_status"]) != STATUS_APPROVED:
+        if not await self.is_authorized(telegram_id):
             return False
         return normalize_role(user["role"]) == normalize_role(role)
 
@@ -415,22 +486,33 @@ class Database:
         role = normalize_role(role)
         subcategory_value = normalize_subcategory(subcategory) or None
         async with self.pool.acquire() as conn:
-            await conn.execute(
-                """
-                INSERT INTO access_codes(code, role, subcategory, description, is_active, created_at)
-                VALUES ($1, $2, $3, $4, $5, NOW())
-                ON CONFLICT(code) DO UPDATE SET
-                    role = EXCLUDED.role,
-                    subcategory = EXCLUDED.subcategory,
-                    description = EXCLUDED.description,
-                    is_active = EXCLUDED.is_active
-                """,
-                normalized,
-                role,
-                subcategory_value,
-                description.strip(),
-                is_active,
-            )
+            async with conn.transaction():
+                if subcategory_value:
+                    await conn.execute(
+                        """
+                        INSERT INTO role_subcategories(role, name, created_at)
+                        VALUES($1, $2, NOW())
+                        ON CONFLICT(role, name) DO NOTHING
+                        """,
+                        role,
+                        subcategory_value,
+                    )
+                await conn.execute(
+                    """
+                    INSERT INTO access_codes(code, role, subcategory, description, is_active, created_at)
+                    VALUES ($1, $2, $3, $4, $5, NOW())
+                    ON CONFLICT(code) DO UPDATE SET
+                        role = EXCLUDED.role,
+                        subcategory = EXCLUDED.subcategory,
+                        description = EXCLUDED.description,
+                        is_active = EXCLUDED.is_active
+                    """,
+                    normalized,
+                    role,
+                    subcategory_value,
+                    description.strip(),
+                    is_active,
+                )
 
     async def set_access_code_status(self, code: str, is_active: bool) -> int:
         normalized = normalize_code(code)
@@ -445,10 +527,23 @@ class Database:
     async def delete_access_code(self, code: str) -> int:
         normalized = normalize_code(code)
         async with self.pool.acquire() as conn:
-            status = await conn.execute(
-                "DELETE FROM access_codes WHERE code = $1",
-                normalized,
-            )
+            async with conn.transaction():
+                status = await conn.execute(
+                    "DELETE FROM access_codes WHERE code = $1",
+                    normalized,
+                )
+                if _extract_rowcount(status):
+                    await conn.execute(
+                        """
+                        UPDATE users
+                        SET access_status = 'rejected',
+                            rejection_reason = 'Код доступа удалён',
+                            approved_at = NULL
+                        WHERE access_code = $1
+                          AND access_status = 'approved'
+                        """,
+                        normalized,
+                    )
         return _extract_rowcount(status)
 
     async def list_access_codes(self, limit: int = 200) -> list[asyncpg.Record]:
@@ -461,6 +556,69 @@ class Database:
                 LIMIT $1
                 """,
                 limit,
+            )
+
+    async def add_subcategory(self, role: str, name: str) -> int:
+        role_value = normalize_role(role)
+        name_value = normalize_subcategory(name)
+        if not name_value:
+            return 0
+        async with self.pool.acquire() as conn:
+            row = await conn.fetchrow(
+                """
+                INSERT INTO role_subcategories(role, name, created_at)
+                VALUES($1, $2, NOW())
+                ON CONFLICT(role, name) DO UPDATE SET name = EXCLUDED.name
+                RETURNING id
+                """,
+                role_value,
+                name_value,
+            )
+        return int(row["id"])
+
+    async def delete_subcategory(self, role: str, name: str) -> int:
+        role_value = normalize_role(role)
+        name_value = normalize_subcategory(name)
+        if not name_value:
+            return 0
+        async with self.pool.acquire() as conn:
+            async with conn.transaction():
+                await conn.execute(
+                    "UPDATE access_codes SET subcategory = NULL WHERE role = $1 AND subcategory = $2",
+                    role_value,
+                    name_value,
+                )
+                await conn.execute(
+                    "UPDATE users SET subcategory = NULL WHERE role = $1 AND subcategory = $2",
+                    role_value,
+                    name_value,
+                )
+                status = await conn.execute(
+                    "DELETE FROM role_subcategories WHERE role = $1 AND name = $2",
+                    role_value,
+                    name_value,
+                )
+        return _extract_rowcount(status)
+
+    async def list_subcategories(self, role: str | None = None) -> list[asyncpg.Record]:
+        role_value = normalize_role(role) if role else None
+        async with self.pool.acquire() as conn:
+            if role_value:
+                return await conn.fetch(
+                    """
+                    SELECT id, role, name, created_at
+                    FROM role_subcategories
+                    WHERE role = $1
+                    ORDER BY name ASC
+                    """,
+                    role_value,
+                )
+            return await conn.fetch(
+                """
+                SELECT id, role, name, created_at
+                FROM role_subcategories
+                ORDER BY role ASC, name ASC
+                """
             )
 
     async def upsert_access_request(
@@ -595,25 +753,38 @@ class Database:
     async def list_authorized_user_ids(self, role: str = ROLE_ALL, subcategory: str | None = None) -> list[int]:
         target = normalize_target_role(role)
         subcategory_value = normalize_subcategory(subcategory)
+        active_access_condition = """
+            access_status = 'approved'
+            AND (
+                access_code LIKE 'APP%'
+                OR access_code LIKE 'NO_CODE_%'
+                OR EXISTS (
+                    SELECT 1
+                    FROM access_codes
+                    WHERE access_codes.code = users.access_code
+                      AND access_codes.is_active = TRUE
+                )
+            )
+        """
         async with self.pool.acquire() as conn:
             if target == ROLE_ALL and not subcategory_value:
                 rows = await conn.fetch(
-                    "SELECT telegram_id FROM users WHERE access_status = 'approved'"
+                    f"SELECT telegram_id FROM users WHERE {active_access_condition}"
                 )
             elif target == ROLE_ALL:
                 rows = await conn.fetch(
-                    "SELECT telegram_id FROM users WHERE access_status = 'approved' AND subcategory = $1",
+                    f"SELECT telegram_id FROM users WHERE {active_access_condition} AND subcategory = $1",
                     subcategory_value,
                 )
             elif subcategory_value:
                 rows = await conn.fetch(
-                    "SELECT telegram_id FROM users WHERE access_status = 'approved' AND role = $1 AND subcategory = $2",
+                    f"SELECT telegram_id FROM users WHERE {active_access_condition} AND role = $1 AND subcategory = $2",
                     target,
                     subcategory_value,
                 )
             else:
                 rows = await conn.fetch(
-                    "SELECT telegram_id FROM users WHERE access_status = 'approved' AND role = $1",
+                    f"SELECT telegram_id FROM users WHERE {active_access_condition} AND role = $1",
                     target,
                 )
         return [int(row["telegram_id"]) for row in rows]
@@ -662,11 +833,13 @@ class Database:
         scheduled_at: datetime | str | None,
         target_role: str = ROLE_ALL,
         target_subcategory: str | None = None,
+        sender_role: str | None = None,
         status: str = "scheduled",
     ) -> int:
         scheduled_dt = _normalize_dt(scheduled_at)
         role = normalize_target_role(target_role)
         subcategory_value = normalize_subcategory(target_subcategory) or None
+        sender_role_value = normalize_role(sender_role) if sender_role else None
         async with self.pool.acquire() as conn:
             row = await conn.fetchrow(
                 """
@@ -674,6 +847,7 @@ class Database:
                     created_by,
                     target_role,
                     target_subcategory,
+                    sender_role,
                     message_text,
                     image_path,
                     source_chat_id,
@@ -681,12 +855,13 @@ class Database:
                     scheduled_at,
                     status
                 )
-                VALUES($1, $2, $3, $4, $5, $6, $7, $8, $9)
+                VALUES($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
                 RETURNING id
                 """,
                 created_by,
                 role,
                 subcategory_value,
+                sender_role_value,
                 message_text,
                 image_path,
                 source_chat_id,
@@ -711,15 +886,30 @@ class Database:
                 broadcast_id,
             )
 
-    async def get_pending_broadcasts(self) -> list[asyncpg.Record]:
+    async def get_pending_broadcasts(self, sender_role: str | None = None) -> list[asyncpg.Record]:
+        sender_role_value = normalize_role(sender_role) if sender_role else None
         async with self.pool.acquire() as conn:
+            if sender_role_value is None:
+                return await conn.fetch(
+                    """
+                    SELECT *
+                    FROM broadcasts
+                    WHERE sent_at IS NULL
+                      AND status = 'scheduled'
+                      AND sender_role IS NULL
+                    ORDER BY COALESCE(scheduled_at, NOW()) ASC
+                    """
+                )
             return await conn.fetch(
                 """
                 SELECT *
                 FROM broadcasts
-                WHERE sent_at IS NULL AND status = 'scheduled'
+                WHERE sent_at IS NULL
+                  AND status = 'scheduled'
+                  AND sender_role = $1
                 ORDER BY COALESCE(scheduled_at, NOW()) ASC
-                """
+                """,
+                sender_role_value,
             )
 
     async def get_recent_sent_broadcasts(
@@ -763,7 +953,7 @@ class Database:
         async with self.pool.acquire() as conn:
             return await conn.fetch(
                 """
-                SELECT id, created_by, target_role, target_subcategory, message_text, image_path, scheduled_at, sent_at, status
+                SELECT id, created_by, target_role, target_subcategory, sender_role, message_text, image_path, scheduled_at, sent_at, status
                 FROM broadcasts
                 ORDER BY id DESC
                 LIMIT $1
