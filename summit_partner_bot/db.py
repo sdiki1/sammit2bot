@@ -194,6 +194,8 @@ class Database:
                     sender_role TEXT,
                     message_text TEXT,
                     image_path TEXT,
+                    image_bytes BYTEA,
+                    image_filename TEXT,
                     source_chat_id BIGINT,
                     source_message_id BIGINT,
                     scheduled_at TIMESTAMPTZ,
@@ -215,6 +217,12 @@ class Database:
                     key TEXT PRIMARY KEY,
                     value TEXT NOT NULL DEFAULT '',
                     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                );
+
+                CREATE TABLE IF NOT EXISTS admin_users (
+                    telegram_id BIGINT PRIMARY KEY,
+                    note TEXT,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
                 );
 
                 CREATE TABLE IF NOT EXISTS content_links (
@@ -315,6 +323,8 @@ class Database:
             await conn.execute("ALTER TABLE broadcasts ADD COLUMN IF NOT EXISTS target_subcategory TEXT")
             await conn.execute("ALTER TABLE broadcasts ADD COLUMN IF NOT EXISTS sender_role TEXT")
             await conn.execute("ALTER TABLE broadcasts ADD COLUMN IF NOT EXISTS image_path TEXT")
+            await conn.execute("ALTER TABLE broadcasts ADD COLUMN IF NOT EXISTS image_bytes BYTEA")
+            await conn.execute("ALTER TABLE broadcasts ADD COLUMN IF NOT EXISTS image_filename TEXT")
             await conn.execute("ALTER TABLE broadcast_deliveries ADD COLUMN IF NOT EXISTS delivered_message_id BIGINT")
             await conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_users_status_role_subcategory ON users(access_status, role, subcategory)"
@@ -325,6 +335,7 @@ class Database:
             await conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_broadcasts_sender ON broadcasts(sender_role, status, sent_at)"
             )
+            await conn.execute("CREATE INDEX IF NOT EXISTS idx_admin_users_created ON admin_users(created_at)")
             await conn.execute("ALTER TABLE content_links ADD COLUMN IF NOT EXISTS category TEXT")
             await conn.execute("ALTER TABLE content_links ADD COLUMN IF NOT EXISTS subcategory TEXT")
 
@@ -828,9 +839,11 @@ class Database:
         created_by: int,
         message_text: str | None,
         image_path: str | None,
-        source_chat_id: int | None,
-        source_message_id: int | None,
-        scheduled_at: datetime | str | None,
+        image_bytes: bytes | None = None,
+        image_filename: str | None = None,
+        source_chat_id: int | None = None,
+        source_message_id: int | None = None,
+        scheduled_at: datetime | str | None = None,
         target_role: str = ROLE_ALL,
         target_subcategory: str | None = None,
         sender_role: str | None = None,
@@ -850,12 +863,14 @@ class Database:
                     sender_role,
                     message_text,
                     image_path,
+                    image_bytes,
+                    image_filename,
                     source_chat_id,
                     source_message_id,
                     scheduled_at,
                     status
                 )
-                VALUES($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+                VALUES($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
                 RETURNING id
                 """,
                 created_by,
@@ -864,6 +879,8 @@ class Database:
                 sender_role_value,
                 message_text,
                 image_path,
+                image_bytes,
+                (image_filename or "").strip() or None,
                 source_chat_id,
                 source_message_id,
                 scheduled_dt,
@@ -953,12 +970,47 @@ class Database:
         async with self.pool.acquire() as conn:
             return await conn.fetch(
                 """
-                SELECT id, created_by, target_role, target_subcategory, sender_role, message_text, image_path, scheduled_at, sent_at, status
+                SELECT id, created_by, target_role, target_subcategory, sender_role, message_text, image_path, image_filename, scheduled_at, sent_at, status
                 FROM broadcasts
                 ORDER BY id DESC
                 LIMIT $1
                 """,
                 limit,
+            )
+
+    async def add_admin_user(self, telegram_id: int, note: str | None = None) -> None:
+        async with self.pool.acquire() as conn:
+            await conn.execute(
+                """
+                INSERT INTO admin_users(telegram_id, note, created_at)
+                VALUES($1, $2, NOW())
+                ON CONFLICT(telegram_id) DO UPDATE SET note = EXCLUDED.note
+                """,
+                telegram_id,
+                (note or "").strip() or None,
+            )
+
+    async def delete_admin_user(self, telegram_id: int) -> int:
+        async with self.pool.acquire() as conn:
+            status = await conn.execute("DELETE FROM admin_users WHERE telegram_id = $1", telegram_id)
+        return _extract_rowcount(status)
+
+    async def is_admin_user(self, telegram_id: int) -> bool:
+        async with self.pool.acquire() as conn:
+            exists = await conn.fetchval(
+                "SELECT EXISTS(SELECT 1 FROM admin_users WHERE telegram_id = $1)",
+                telegram_id,
+            )
+        return bool(exists)
+
+    async def list_admin_users(self) -> list[asyncpg.Record]:
+        async with self.pool.acquire() as conn:
+            return await conn.fetch(
+                """
+                SELECT telegram_id, note, created_at
+                FROM admin_users
+                ORDER BY created_at DESC, telegram_id ASC
+                """
             )
 
     async def add_delivery(

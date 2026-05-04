@@ -7,7 +7,7 @@ from typing import Any
 
 from aiogram import Bot
 from aiogram.exceptions import TelegramForbiddenError, TelegramRetryAfter
-from aiogram.types import FSInputFile
+from aiogram.types import BufferedInputFile, FSInputFile
 
 from summit_partner_bot.db import Database, normalize_role, normalize_target_role
 
@@ -44,6 +44,8 @@ async def send_broadcast(bot: Bot, db: Database, broadcast_id: int) -> tuple[int
 
     message_text = broadcast["message_text"]
     image_path = broadcast["image_path"]
+    image_bytes = broadcast["image_bytes"]
+    image_filename = str(broadcast["image_filename"] or "broadcast.jpg")
     source_chat_id = broadcast["source_chat_id"]
     source_message_id = broadcast["source_message_id"]
 
@@ -57,6 +59,12 @@ async def send_broadcast(bot: Bot, db: Database, broadcast_id: int) -> tuple[int
                     chat_id=user_id,
                     from_chat_id=source_chat_id,
                     message_id=source_message_id,
+                )
+            elif image_bytes:
+                sent_message = await bot.send_photo(
+                    user_id,
+                    photo=BufferedInputFile(bytes(image_bytes), filename=image_filename),
+                    caption=message_text or None,
                 )
             elif image_path:
                 sent_message = await bot.send_photo(
@@ -84,6 +92,12 @@ async def send_broadcast(bot: Bot, db: Database, broadcast_id: int) -> tuple[int
                         chat_id=user_id,
                         from_chat_id=source_chat_id,
                         message_id=source_message_id,
+                    )
+                elif image_bytes:
+                    sent_message = await bot.send_photo(
+                        user_id,
+                        photo=BufferedInputFile(bytes(image_bytes), filename=image_filename),
+                        caption=message_text or None,
                     )
                 elif image_path:
                     sent_message = await bot.send_photo(

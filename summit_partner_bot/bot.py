@@ -137,6 +137,18 @@ ALL_MAIN_BUTTONS = set(PUBLIC_MENU_BUTTONS) | {
     BTN_CONSENT_ACCEPT,
 }
 
+PROFILE_MENU_BUTTONS = {
+    BTN_NEWS,
+    BTN_PROGRAM,
+    BTN_LINKS,
+    BTN_MATERIALS,
+    BTN_BOOTH_BOOKING,
+    BTN_MANAGER,
+    BTN_INFLUENCER_CONDITIONS,
+    BTN_INFLUENCER_APPLICATION,
+    BTN_TO_PUBLIC_MENU,
+}
+
 
 def _extract_command_payload(text: str) -> str:
     parts = text.split(maxsplit=1)
@@ -212,6 +224,14 @@ def _normalize_caption_for_match(value: str) -> str:
 
 def _is_admin(message: Message, settings: Settings) -> bool:
     return bool(message.from_user and message.from_user.id in settings.admin_ids)
+
+
+async def _is_admin_message(message: Message, settings: Settings, db: Database) -> bool:
+    if not message.from_user:
+        return False
+    if message.from_user.id in settings.admin_ids:
+        return True
+    return await db.is_admin_user(message.from_user.id)
 
 
 def _is_access_granted(user_row: dict | object | None) -> bool:
@@ -1102,6 +1122,17 @@ async def create_dispatcher(
             payload = ""
 
         app_match = APP_START_RE.match(raw_payload)
+        if app_match and not profile_role:
+            link = _role_bot_link(settings, ROLE_PARTNER)
+            if link:
+                token = app_match.group(1)
+                await message.answer(
+                    "Эта заявка открывается в боте партнёров.",
+                    reply_markup=url_keyboard([{"title": "Открыть бот партнёров", "url": f"{link}?start=app_{token}"}]),
+                )
+            else:
+                await message.answer("Откройте бота партнёров и отправьте ссылку заявки там.")
+            return
         if app_match:
             handled = await _handle_application_start(
                 message=message,
@@ -1114,6 +1145,11 @@ async def create_dispatcher(
             )
             if handled:
                 return
+
+        if not profile_role:
+            await state.clear()
+            await _show_public_menu(message, content_loader)
+            return
 
         if _is_access_granted(user_row):
             if profile_role and normalize_role(str(user_row["role"])) != profile_role:
@@ -1183,6 +1219,14 @@ async def create_dispatcher(
         if not message.from_user:
             return
 
+        if not profile_role:
+            await state.clear()
+            await message.answer(
+                "Код приглашения вводится в профильном боте. Выберите нужную роль в меню.",
+                reply_markup=public_menu_keyboard(),
+            )
+            return
+
         user_row = await db.get_user(message.from_user.id)
         if _is_access_granted(user_row):
             await _show_private_menu(
@@ -1216,6 +1260,10 @@ async def create_dispatcher(
     @router.message(Command("menu"))
     async def cmd_menu(message: Message, state: FSMContext) -> None:
         if not message.from_user:
+            return
+        if not profile_role:
+            await state.clear()
+            await _show_public_menu(message, content_loader)
             return
         user_row = await db.get_user(message.from_user.id)
         if _is_access_granted(user_row):
@@ -1251,7 +1299,7 @@ async def create_dispatcher(
                 await _show_public_menu(message, content_loader)
             return
         user_row = await db.get_user(message.from_user.id)
-        if _is_access_granted(user_row):
+        if profile_role and _is_access_granted(user_row):
             await message.answer("❌ Действие отменено.", reply_markup=private_keyboard(str(user_row["role"])))
         elif profile_role:
             await message.answer(
@@ -1274,6 +1322,14 @@ async def create_dispatcher(
 
     @router.message(AccessRequestFlow.waiting_access_code)
     async def request_access_code(message: Message, state: FSMContext) -> None:
+        if not profile_role:
+            await state.clear()
+            await message.answer(
+                "Код приглашения вводится в профильном боте. Выберите нужную роль в меню.",
+                reply_markup=public_menu_keyboard(),
+            )
+            return
+
         raw_text = (message.text or "").strip()
         if raw_text in PUBLIC_MENU_BUTTONS:
             if include_public_menu:
@@ -1617,7 +1673,7 @@ async def create_dispatcher(
                 f"Переходов: {stats['clicks']}\n"
                 f"Заявок: {stats['pending']}\n"
                 f"Подтверждено: {stats['approved']}",
-                reply_markup=private_keyboard(str(user_row["role"])),
+                reply_markup=private_keyboard(str(user_row["role"])) if profile_role else public_menu_keyboard(),
             )
             return
 
@@ -1626,6 +1682,8 @@ async def create_dispatcher(
             if not profile_role:
                 if await _send_role_bot_transition(message, settings, role):
                     return
+                await message.answer("Профильный бот для этой роли пока не настроен.", reply_markup=public_menu_keyboard())
+                return
 
             if is_approved and normalize_role(str(user_row["role"])) == role:
                 await _show_private_menu(
@@ -1651,6 +1709,13 @@ async def create_dispatcher(
             return
 
         await _show_public_menu(message, content_loader)
+
+    @router.message(lambda message: profile_role is None and (message.text or "").strip() in PROFILE_MENU_BUTTONS)
+    async def public_bot_blocks_profile_menu(message: Message) -> None:
+        await message.answer(
+            "Профильные разделы открываются в отдельных ботах. Выберите нужную роль в общем меню.",
+            reply_markup=public_menu_keyboard(),
+        )
 
     @router.message(FeedbackFlow.waiting_for_feedback)
     async def save_feedback(message: Message, state: FSMContext) -> None:
@@ -1688,7 +1753,7 @@ async def create_dispatcher(
                 logger.exception("Failed to notify feedback to chat %s", chat_id)
 
         await state.clear()
-        if _is_access_granted(user_row):
+        if profile_role and _is_access_granted(user_row):
             await message.answer("✅ Спасибо! Отзыв отправлен.", reply_markup=private_keyboard(str(user_row["role"])))
         else:
             await message.answer(
@@ -2206,7 +2271,7 @@ async def create_dispatcher(
     async def manager_connect_user(message: Message) -> None:
         if not message.from_user:
             return
-        if message.chat.id not in settings.support_chat_ids and not _is_admin(message, settings):
+        if message.chat.id not in settings.support_chat_ids and not await _is_admin_message(message, settings, db):
             return
 
         payload = _extract_command_payload(message.text or "")
@@ -2241,7 +2306,7 @@ async def create_dispatcher(
     async def manager_disconnect_user(message: Message) -> None:
         if not message.from_user:
             return
-        if message.chat.id not in settings.support_chat_ids and not _is_admin(message, settings):
+        if message.chat.id not in settings.support_chat_ids and not await _is_admin_message(message, settings, db):
             return
 
         payload = _extract_command_payload(message.text or "")
@@ -2267,7 +2332,7 @@ async def create_dispatcher(
 
     @router.message(Command("pending_requests"))
     async def admin_pending_requests(message: Message) -> None:
-        if not _is_admin(message, settings):
+        if not await _is_admin_message(message, settings, db):
             return
         rows = await db.list_pending_users(limit=80)
         if not rows:
@@ -2288,7 +2353,7 @@ async def create_dispatcher(
 
     @router.message(Command("approve_user"))
     async def admin_approve_user(message: Message) -> None:
-        if not _is_admin(message, settings) or not message.from_user:
+        if not await _is_admin_message(message, settings, db) or not message.from_user:
             return
         payload = _extract_command_payload(message.text or "")
         if not payload:
@@ -2320,7 +2385,7 @@ async def create_dispatcher(
 
     @router.message(Command("reject_user"))
     async def admin_reject_user(message: Message) -> None:
-        if not _is_admin(message, settings) or not message.from_user:
+        if not await _is_admin_message(message, settings, db) or not message.from_user:
             return
         payload = _extract_command_payload(message.text or "")
         if not payload:
@@ -2359,7 +2424,7 @@ async def create_dispatcher(
 
     @router.message(Command("add_code"))
     async def admin_add_code(message: Message) -> None:
-        if not _is_admin(message, settings):
+        if not await _is_admin_message(message, settings, db):
             return
         payload = _extract_command_payload(message.text or "")
         if not payload:
@@ -2388,7 +2453,7 @@ async def create_dispatcher(
 
     @router.message(Command("disable_code"))
     async def admin_disable_code(message: Message) -> None:
-        if not _is_admin(message, settings):
+        if not await _is_admin_message(message, settings, db):
             return
         payload = _extract_command_payload(message.text or "")
         if not payload:
@@ -2399,7 +2464,7 @@ async def create_dispatcher(
 
     @router.message(Command("enable_code"))
     async def admin_enable_code(message: Message) -> None:
-        if not _is_admin(message, settings):
+        if not await _is_admin_message(message, settings, db):
             return
         payload = _extract_command_payload(message.text or "")
         if not payload:
@@ -2410,7 +2475,7 @@ async def create_dispatcher(
 
     @router.message(Command("delete_code"))
     async def admin_delete_code(message: Message) -> None:
-        if not _is_admin(message, settings):
+        if not await _is_admin_message(message, settings, db):
             return
         payload = _extract_command_payload(message.text or "")
         if not payload:
@@ -2421,7 +2486,7 @@ async def create_dispatcher(
 
     @router.message(Command("list_codes"))
     async def admin_list_codes(message: Message) -> None:
-        if not _is_admin(message, settings):
+        if not await _is_admin_message(message, settings, db):
             return
         rows = await db.list_access_codes(limit=300)
         if not rows:
@@ -2442,7 +2507,7 @@ async def create_dispatcher(
 
     @router.message(Command("check_code"))
     async def admin_check_code(message: Message) -> None:
-        if not _is_admin(message, settings):
+        if not await _is_admin_message(message, settings, db):
             return
         payload = _extract_command_payload(message.text or "")
         if not payload:
@@ -2467,7 +2532,7 @@ async def create_dispatcher(
 
     @router.message(Command("save_link"))
     async def admin_save_link(message: Message) -> None:
-        if not _is_admin(message, settings):
+        if not await _is_admin_message(message, settings, db):
             return
         payload = _extract_command_payload(message.text or "")
         parts = [chunk.strip() for chunk in payload.split("|")]
@@ -2489,7 +2554,7 @@ async def create_dispatcher(
 
     @router.message(Command("save_material"))
     async def admin_save_material(message: Message) -> None:
-        if not _is_admin(message, settings):
+        if not await _is_admin_message(message, settings, db):
             return
 
         payload = _extract_command_payload(message.text or "")
@@ -2524,7 +2589,7 @@ async def create_dispatcher(
 
     @router.message(Command("export_users"))
     async def admin_export_users(message: Message) -> None:
-        if not _is_admin(message, settings):
+        if not await _is_admin_message(message, settings, db):
             return
 
         rows = await db.list_users(limit=5000)
@@ -2592,7 +2657,7 @@ async def create_dispatcher(
 
     @router.message(Command("broadcast"))
     async def admin_broadcast(message: Message) -> None:
-        if not _is_admin(message, settings):
+        if not await _is_admin_message(message, settings, db):
             return
         if not message.from_user:
             return
@@ -2640,7 +2705,7 @@ async def create_dispatcher(
 
     @router.message(Command("broadcast_in"))
     async def admin_broadcast_in(message: Message) -> None:
-        if not _is_admin(message, settings):
+        if not await _is_admin_message(message, settings, db):
             return
         if not message.from_user:
             return
@@ -2712,7 +2777,7 @@ async def create_dispatcher(
 
     @router.message(Command("broadcast_stats"))
     async def admin_broadcast_stats(message: Message) -> None:
-        if not _is_admin(message, settings):
+        if not await _is_admin_message(message, settings, db):
             return
         payload = _extract_command_payload(message.text or "")
         if not payload:
@@ -2743,7 +2808,7 @@ async def create_dispatcher(
 
     @router.message(Command("delete_broadcast"))
     async def admin_delete_broadcast(message: Message) -> None:
-        if not _is_admin(message, settings):
+        if not await _is_admin_message(message, settings, db):
             return
 
         payload = _extract_command_payload(message.text or "")
@@ -2795,17 +2860,11 @@ async def create_dispatcher(
             f"Ошибок: {failed_count}"
         )
 
-    @router.message(
-        lambda message: (
-            message.reply_to_message is not None
-            and (
-                message.chat.id in settings.support_chat_ids
-                or (message.from_user is not None and message.from_user.id in settings.admin_ids)
-            )
-        )
-    )
+    @router.message(lambda message: message.reply_to_message is not None)
     async def bridge_manager_reply(message: Message) -> None:
         if not message.from_user:
+            return
+        if message.chat.id not in settings.support_chat_ids and not await _is_admin_message(message, settings, db):
             return
         if message.from_user.id == bot.id:
             return
@@ -2875,7 +2934,7 @@ async def create_dispatcher(
                 await message.answer("⚠️ Не удалось отправить сообщение менеджеру. Попробуйте позже.")
             return
 
-        if _is_access_granted(user_row):
+        if profile_role and _is_access_granted(user_row):
             await message.answer(
                 "ℹ️ Используйте кнопки меню для навигации.",
                 reply_markup=private_keyboard(str(user_row["role"])),
@@ -2883,7 +2942,7 @@ async def create_dispatcher(
             return
 
         current_state = await state.get_state()
-        if current_state is None and raw_text and raw_text not in ALL_MAIN_BUTTONS:
+        if profile_role and current_state is None and raw_text and raw_text not in ALL_MAIN_BUTTONS:
             if _looks_like_access_code_candidate(raw_text):
                 ok = await _process_access_code_input(
                     message=message,

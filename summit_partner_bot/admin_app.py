@@ -282,6 +282,7 @@ def create_app() -> FastAPI:
         feedback_items = await db.list_feedback(limit=120)
         applications = await db.list_applications(limit=200)
         support_sessions = await db.list_active_support_sessions(limit=100)
+        admin_users = await db.list_admin_users()
         settings_map = await db.get_content_settings_map()
 
         links_all = await db.list_all_content_links(include_inactive=True)
@@ -325,6 +326,8 @@ def create_app() -> FastAPI:
                 "applications": applications,
                 "application_statuses": APPLICATION_STATUSES,
                 "support_sessions": support_sessions,
+                "admin_users": admin_users,
+                "env_admin_ids": sorted(settings.admin_ids),
                 "links_by_section": links_by_section,
                 "sections": sections,
                 "visible_sections": visible_sections,
@@ -358,6 +361,38 @@ def create_app() -> FastAPI:
             is_active=True,
         )
         _set_flash(request, "Код сохранён.")
+        return _redirect(_dashboard_url(_sanitize_tab(tab)))
+
+    @app.post("/admins/add")
+    async def add_admin_user(
+        request: Request,
+        telegram_id: str = Form(...),
+        note: str = Form(""),
+        tab: str = Form(TAB_SYSTEM),
+    ) -> RedirectResponse:
+        maybe_redirect = _require_auth(request)
+        if maybe_redirect is not None:
+            return maybe_redirect
+        try:
+            admin_id = int(telegram_id.strip())
+        except ValueError:
+            _set_flash(request, "Telegram ID администратора должен быть числом.")
+            return _redirect(_dashboard_url(_sanitize_tab(tab)))
+        await db.add_admin_user(admin_id, note=note)
+        _set_flash(request, f"Администратор {admin_id} добавлен.")
+        return _redirect(_dashboard_url(_sanitize_tab(tab)))
+
+    @app.post("/admins/delete")
+    async def delete_admin_user(
+        request: Request,
+        telegram_id: int = Form(...),
+        tab: str = Form(TAB_SYSTEM),
+    ) -> RedirectResponse:
+        maybe_redirect = _require_auth(request)
+        if maybe_redirect is not None:
+            return maybe_redirect
+        deleted = await db.delete_admin_user(telegram_id)
+        _set_flash(request, "Администратор удалён." if deleted else "Администратор не найден.")
         return _redirect(_dashboard_url(_sanitize_tab(tab)))
 
     @app.post("/subcategories/add")
@@ -449,8 +484,6 @@ def create_app() -> FastAPI:
     async def add_link(
         request: Request,
         section: str = Form(...),
-        category: str = Form(""),
-        subcategory: str = Form(""),
         title: str = Form(...),
         url: str = Form(...),
         position: int = Form(100),
@@ -463,8 +496,8 @@ def create_app() -> FastAPI:
         try:
             await db.add_content_link(
                 section=section,
-                category=category,
-                subcategory=subcategory,
+                category="",
+                subcategory="",
                 title=title,
                 url=url,
                 position=position,
@@ -480,8 +513,6 @@ def create_app() -> FastAPI:
         request: Request,
         link_id: int = Form(...),
         section: str = Form(...),
-        category: str = Form(""),
-        subcategory: str = Form(""),
         title: str = Form(...),
         url: str = Form(...),
         position: int = Form(100),
@@ -494,8 +525,8 @@ def create_app() -> FastAPI:
         await db.update_content_link(
             link_id=link_id,
             section=section,
-            category=category,
-            subcategory=subcategory,
+            category="",
+            subcategory="",
             title=title,
             url=url,
             position=position,
@@ -603,6 +634,8 @@ def create_app() -> FastAPI:
 
         text = message_text.strip()
         image_path: str | None = None
+        image_bytes: bytes | None = None
+        image_filename: str | None = None
         if broadcast_image is not None and (broadcast_image.filename or "").strip():
             content_type = (broadcast_image.content_type or "").lower()
             if not content_type.startswith("image/"):
@@ -614,13 +647,10 @@ def create_app() -> FastAPI:
                 _set_flash(request, "Поддерживаются JPG, PNG и WEBP.")
                 return _redirect(_dashboard_url(_sanitize_tab(tab)))
 
-            uploads_dir = _broadcast_uploads_dir(settings.content_file)
-            uploads_dir.mkdir(parents=True, exist_ok=True)
-            file_path = uploads_dir / f"{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}_{uuid4().hex}{suffix}"
-            file_path.write_bytes(await broadcast_image.read())
-            image_path = str(file_path)
+            image_bytes = await broadcast_image.read()
+            image_filename = Path(broadcast_image.filename or f"broadcast{suffix}").name
 
-        if not text and not image_path:
+        if not text and not image_path and not image_bytes:
             _set_flash(request, "Укажите текст рассылки или добавьте изображение.")
             return _redirect(_dashboard_url(_sanitize_tab(tab)))
 
@@ -651,6 +681,8 @@ def create_app() -> FastAPI:
                     sender_role=role_target,
                     message_text=text or None,
                     image_path=image_path,
+                    image_bytes=image_bytes,
+                    image_filename=image_filename,
                     source_chat_id=None,
                     source_message_id=None,
                     scheduled_at=scheduled_dt,

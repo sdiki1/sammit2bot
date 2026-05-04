@@ -353,10 +353,8 @@
               <option value="{{ section }}">{{ section }}</option>
             {% endfor %}
           </select>
-          <input class="c2" name="category" placeholder="Категория">
-          <input class="c2" name="subcategory" placeholder="Подкатегория">
-          <input class="c2" name="title" placeholder="Название" required>
-          <input class="c3" name="url" placeholder="URL или file_id:..." required>
+          <input class="c3" name="title" placeholder="Название" required>
+          <input class="c4" name="url" placeholder="URL или file_id:..." required>
           <input class="c1" type="number" name="position" value="100">
           <label class="c1"><input type="checkbox" name="is_active" checked> On</label>
           <button class="c2" type="submit">Добавить</button>
@@ -374,10 +372,8 @@
                     <option value="{{ s }}" {% if s == link.section %}selected{% endif %}>{{ s }}</option>
                   {% endfor %}
                 </select>
-                <input class="c2" name="category" value="{{ link.category or '' }}" placeholder="Категория">
-                <input class="c2" name="subcategory" value="{{ link.subcategory or '' }}" placeholder="Подкатегория">
-                <input class="c2" name="title" value="{{ link.title }}" required>
-                <input class="c3" name="url" value="{{ link.url }}" required>
+                <input class="c3" name="title" value="{{ link.title }}" required>
+                <input class="c4" name="url" value="{{ link.url }}" required>
                 <input class="c1" type="number" name="position" value="{{ link.position }}">
                 <label class="c1"><input type="checkbox" name="is_active" {% if link.is_active %}checked{% endif %}> On</label>
                 <button class="c2" type="submit">Сохранить</button>
@@ -396,6 +392,44 @@
     {% endif %}
 
     {% if active_tab == 'system' %}
+      <section>
+        <h2>Администраторы Telegram</h2>
+        <form method="post" action="/admins/add" class="row">
+          <input type="hidden" name="tab" value="{{ active_tab }}">
+          <input class="c4" name="telegram_id" placeholder="Telegram ID" required>
+          <input class="c6" name="note" placeholder="Комментарий">
+          <button class="c2" type="submit">Добавить</button>
+        </form>
+        {% if env_admin_ids %}
+          <div class="muted">Админы из .env: {{ env_admin_ids|join(', ') }}</div>
+        {% endif %}
+        {% if admin_users %}
+          <table>
+            <thead>
+              <tr><th>Telegram ID</th><th>Комментарий</th><th>Добавлен</th><th>Действие</th></tr>
+            </thead>
+            <tbody>
+              {% for admin in admin_users %}
+                <tr>
+                  <td>{{ admin.telegram_id }}</td>
+                  <td>{{ admin.note or '-' }}</td>
+                  <td>{{ admin.created_at }}</td>
+                  <td>
+                    <form method="post" action="/admins/delete" class="row">
+                      <input type="hidden" name="tab" value="{{ active_tab }}">
+                      <input type="hidden" name="telegram_id" value="{{ admin.telegram_id }}">
+                      <button class="danger c12" type="submit">Удалить</button>
+                    </form>
+                  </td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        {% else %}
+          <div class="muted">Дополнительные Telegram-администраторы не добавлены.</div>
+        {% endif %}
+      </section>
+
       <section>
         <h2>Заявки и бронирование стендов</h2>
         {% if applications %}
@@ -545,7 +579,7 @@
                   <td>{{ b.status }}</td>
                   <td>{{ b.scheduled_at or '-' }}</td>
                   <td>{{ b.sent_at or '-' }}</td>
-                  <td>{% if b.image_path %}🖼 {% endif %}{{ (b.message_text or '')[:120] or '-' }}</td>
+                  <td>{% if b.image_path or b.image_filename %}🖼 {% endif %}{{ (b.message_text or '')[:120] or '-' }}</td>
                   <td>
                     {% if not b.sent_at and b.status == 'scheduled' %}
                       <form method="post" action="/broadcasts/delete" class="row">
