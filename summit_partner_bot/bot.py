@@ -248,12 +248,16 @@ def _is_access_granted(user_row: dict | object | None) -> bool:
     return is_internal_access_code(str(user_row["access_code"] or ""))
 
 
-def _format_welcome(first_name: str, summit_name: str, role: str, content: dict) -> str:
+def _format_welcome(first_name: str, summit_name: str, role: str, content: dict, subcategory: str = "") -> str:
     default_template = (
         "👋 Добро пожаловать, {first_name}!\n"
         "Вы авторизованы как {role_title} саммита {summit_name}.\n\n"
         "Используйте меню ниже для быстрого доступа к информации."
     )
+    if role == ROLE_PARTNER and subcategory:
+        pkg_template = str(content.get(f"welcome_template_partner_{subcategory}", "")).strip()
+        if pkg_template:
+            return pkg_template
     template = str(content.get("welcome_template", default_template))
     values = {
         "first_name": first_name,
@@ -414,11 +418,13 @@ async def _show_private_menu(
 
     content = await content_loader.load()
     role = normalize_role(str(user_row["role"]))
+    subcategory = normalize_subcategory(str(user_row["subcategory"] or "") if user_row["subcategory"] else "")
     welcome = _format_welcome(
         first_name=message.from_user.first_name or str(user_row["first_name"] or "участник"),
         summit_name=settings.summit_name,
         role=role,
         content=content,
+        subcategory=subcategory,
     )
     await message.answer(welcome, reply_markup=private_menu_keyboard(role, include_public_menu=include_public_menu))
 
@@ -1467,6 +1473,11 @@ async def create_dispatcher(
         inn = str(data.get("inn", "")).strip()
         booth_number = str(data.get("booth_number", "")).strip()
 
+        source_text = (
+            "Заявка на партнёрство из основного Telegram-бота"
+            if not profile_role
+            else "Заявка без кода из профильного Telegram-бота"
+        )
         await _complete_request(
             message=message,
             state=state,
@@ -1481,7 +1492,7 @@ async def create_dispatcher(
             consent_accepted=True,
             booth_number=booth_number,
             application_source="no_code",
-            application_text="Заявка без кода из профильного Telegram-бота",
+            application_text=source_text,
             include_public_menu=include_public_menu,
         )
 
@@ -1680,6 +1691,9 @@ async def create_dispatcher(
         if text in ROLE_ENTRY_BUTTONS:
             role = ROLE_ENTRY_BUTTONS[text]
             if not profile_role:
+                if role == ROLE_PARTNER:
+                    await _start_no_code_registration(message, state, ROLE_PARTNER)
+                    return
                 if await _send_role_bot_transition(message, settings, role):
                     return
                 await message.answer("Профильный бот для этой роли пока не настроен.", reply_markup=public_menu_keyboard())

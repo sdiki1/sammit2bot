@@ -49,6 +49,7 @@ class Settings:
     admin_panel_password: str
     admin_panel_secret: str
     admin_panel_port: int
+    site_api_key: str
 
 
 def load_settings() -> Settings:
@@ -136,6 +137,7 @@ def load_settings() -> Settings:
     if not admin_panel_secret:
         raise RuntimeError("Environment variable ADMIN_PANEL_SECRET is required")
     admin_panel_port = int(os.getenv("ADMIN_PANEL_PORT", "8030"))
+    site_api_key = os.getenv("SITE_API_KEY", "").strip()
 
     return Settings(
         bot_token=bot_token,
@@ -159,4 +161,5 @@ def load_settings() -> Settings:
         admin_panel_password=admin_panel_password,
         admin_panel_secret=admin_panel_secret,
         admin_panel_port=admin_panel_port,
+        site_api_key=site_api_key,
     )

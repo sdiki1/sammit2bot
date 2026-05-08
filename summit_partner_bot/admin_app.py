@@ -6,9 +6,10 @@ from typing import Any
 from uuid import uuid4
 from zoneinfo import ZoneInfo
 
-from fastapi import FastAPI, File, Form, Request, UploadFile
-from fastapi.responses import RedirectResponse
+from fastapi import FastAPI, File, Form, Header, HTTPException, Request, UploadFile
+from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
+from pydantic import BaseModel
 from starlette.middleware.sessions import SessionMiddleware
 from starlette.status import HTTP_303_SEE_OTHER
 
@@ -264,6 +265,45 @@ def create_app() -> FastAPI:
                 "bot_link_base": base,
             },
         )
+
+    class SiteApplicationRequest(BaseModel):
+        company: str = ""
+        inn: str = ""
+        contact_name: str = ""
+        phone: str = ""
+        email: str = ""
+        booth: str = ""
+        message: str = ""
+
+    @app.post("/api/v1/partner-application")
+    async def api_create_partner_application(
+        body: SiteApplicationRequest,
+        x_api_key: str | None = Header(default=None, alias="X-Api-Key"),
+    ) -> JSONResponse:
+        if not settings.site_api_key:
+            raise HTTPException(status_code=503, detail="API endpoint is disabled")
+        if x_api_key != settings.site_api_key:
+            raise HTTPException(status_code=401, detail="Invalid API key")
+
+        token = uuid4().hex[:24]
+        request_text = body.message.strip() or "Заявка с сайта"
+        await db.create_application(
+            token=token,
+            role=ROLE_PARTNER,
+            source="site",
+            request_text=request_text,
+            booth_number=body.booth,
+            full_name=body.contact_name,
+            phone=body.phone,
+            email=body.email,
+            company=body.company,
+            inn=body.inn,
+        )
+
+        partner_username = (settings.partner_bot_username or settings.bot_username).strip()
+        deep_link = f"https://t.me/{partner_username}?start=app_{token}" if partner_username else ""
+
+        return JSONResponse({"token": token, "deep_link": deep_link})
 
     @app.get("/dashboard")
     async def dashboard(request: Request) -> Any:
