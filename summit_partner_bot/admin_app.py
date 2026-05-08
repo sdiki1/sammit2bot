@@ -11,6 +11,16 @@ from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
 from starlette.middleware.sessions import SessionMiddleware
+
+
+class SiteApplicationRequest(BaseModel):
+    company: str = ""
+    inn: str = ""
+    contact_name: str = ""
+    phone: str = ""
+    email: str = ""
+    booth: str = ""
+    message: str = ""
 from starlette.status import HTTP_303_SEE_OTHER
 
 from summit_partner_bot.config import load_settings
@@ -265,15 +275,6 @@ def create_app() -> FastAPI:
                 "bot_link_base": base,
             },
         )
-
-    class SiteApplicationRequest(BaseModel):
-        company: str = ""
-        inn: str = ""
-        contact_name: str = ""
-        phone: str = ""
-        email: str = ""
-        booth: str = ""
-        message: str = ""
 
     @app.post("/api/v1/partner-application")
     async def api_create_partner_application(
