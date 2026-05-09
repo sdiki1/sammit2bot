@@ -24,6 +24,7 @@ BTN_CHANNEL = "📢 Канал СТАММИТ26"
 BTN_SITE = "🌐 Сайт СТАММИТ26"
 BTN_FEEDBACK = "💬 Оставить отзыв"
 BTN_REFERRAL = "🎁 Пригласи коллег и выиграй айфон"
+BTN_BOOTH_BOOKING = "🏗 Забронировать стенд"
 
 PUBLIC_MENU_BUTTONS = [
     BTN_ABOUT,
@@ -49,7 +50,6 @@ BTN_PROGRAM = "📅 Программа саммита"
 BTN_LINKS = "🔗 Полезные ссылки"
 BTN_MANAGER = "🧑‍💼 Связаться с менеджером"
 BTN_MATERIALS = "📎 Материалы"
-BTN_BOOTH_BOOKING = "🏗 Забронировать стенд"
 BTN_INFLUENCER_CONDITIONS = "📋 Условия для инфлюенсеров"
 BTN_INFLUENCER_APPLICATION = "📝 Заявка"
 
