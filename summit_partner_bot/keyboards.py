@@ -31,6 +31,7 @@ PUBLIC_MENU_BUTTONS = [
     BTN_FOR_PARTNERS,
     BTN_FOR_INFLUENCERS,
     BTN_FOR_EXPERTS,
+    BTN_BOOTH_BOOKING,
     BTN_PROGRAM_PUBLIC,
     BTN_SPEAKERS,
     BTN_ROUTE,
@@ -76,9 +77,6 @@ def public_menu_keyboard() -> ReplyKeyboardMarkup:
 
 def private_menu_keyboard(role: str, include_public_menu: bool = True) -> ReplyKeyboardMarkup:
     rows = _chunk_buttons([BTN_NEWS, BTN_PROGRAM, BTN_LINKS, BTN_MATERIALS])
-
-    if role == ROLE_PARTNER:
-        rows.extend(_chunk_buttons([BTN_BOOTH_BOOKING]))
 
     if role == ROLE_INFLUENCER:
         rows.extend(_chunk_buttons([BTN_INFLUENCER_CONDITIONS, BTN_INFLUENCER_APPLICATION]))
