@@ -1753,6 +1753,14 @@ class Database:
 
     # ── Согласия ──────────────────────────────────────────────────
 
+    async def update_user_subcategory(self, telegram_id: int, subcategory: str) -> asyncpg.Record | None:
+        async with self.pool.acquire() as conn:
+            return await conn.fetchrow(
+                "UPDATE users SET subcategory = $2 WHERE telegram_id = $1 RETURNING *",
+                telegram_id,
+                subcategory.strip() or None,
+            )
+
     async def get_consent_documents(self, bot_key: str) -> list[asyncpg.Record]:
         async with self.pool.acquire() as conn:
             return await conn.fetch(

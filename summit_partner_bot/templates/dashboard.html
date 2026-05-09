@@ -701,7 +701,7 @@
         <table>
           <thead>
             <tr>
-              <th>ID</th><th>Telegram</th><th>Роль</th><th>Подкатегория</th><th>Статус</th><th>Имя</th><th>Телефон</th><th>Email</th><th>Компания</th><th>ИНН</th><th>Согласие</th><th>Код</th><th>Рефкод</th><th>Реферер</th><th>Регистрация</th>
+              <th>ID</th><th>Telegram</th><th>Роль</th><th>Подкатегория</th><th>Статус</th><th>Имя</th><th>Телефон</th><th>Email</th><th>Компания</th><th>ИНН</th><th>Согласие</th><th>Код</th><th>Рефкод</th><th>Реферер</th><th>Регистрация</th><th>Действие</th>
             </tr>
           </thead>
           <tbody>
@@ -722,6 +722,19 @@
                 <td>{{ u.referral_code or '-' }}</td>
                 <td>{{ u.referred_by or '-' }}</td>
                 <td>{{ u.registered_at }}</td>
+                <td>
+                  <form method="post" action="/users/subcategory" class="row">
+                    <input type="hidden" name="tab" value="{{ active_tab }}">
+                    <input type="hidden" name="telegram_id" value="{{ u.telegram_id }}">
+                    <select name="subcategory">
+                      <option value="">— нет —</option>
+                      {% for sub in subcategories_by_role.get(u.role, []) %}
+                        <option value="{{ sub.name }}" {% if sub.name == u.subcategory %}selected{% endif %}>{{ sub.name }}</option>
+                      {% endfor %}
+                    </select>
+                    <button type="submit">Сохранить</button>
+                  </form>
+                </td>
               </tr>
             {% endfor %}
           </tbody>

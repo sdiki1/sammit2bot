@@ -541,6 +541,20 @@ def create_app() -> FastAPI:
         _set_flash(request, f"Пользователь {telegram_id} отклонён.")
         return _redirect(_dashboard_url(_sanitize_tab(tab)))
 
+    @app.post("/users/subcategory")
+    async def set_user_subcategory(
+        request: Request,
+        telegram_id: int = Form(...),
+        subcategory: str = Form(""),
+        tab: str = Form(TAB_SYSTEM),
+    ) -> RedirectResponse:
+        maybe_redirect = _require_auth(request)
+        if maybe_redirect is not None:
+            return maybe_redirect
+        row = await db.update_user_subcategory(telegram_id=telegram_id, subcategory=subcategory)
+        _set_flash(request, f"Подкатегория обновлена." if row else "Пользователь не найден.")
+        return _redirect(_dashboard_url(_sanitize_tab(tab)))
+
     @app.post("/links/add")
     async def add_link(
         request: Request,
