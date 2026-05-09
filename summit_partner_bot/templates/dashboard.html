@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Summit Admin</title>
+  <title>Админ-панель Summit</title>
   <style>
     :root {
       --line: #dbe3ef;
@@ -155,9 +155,68 @@
     th { color: var(--muted); font-weight: 700; }
 
     .block { border: 1px solid var(--line); border-radius: 10px; padding: 10px; margin-bottom: 10px; }
+
+    /* Бейджи статусов заявок */
+    .badge {
+      display: inline-block;
+      border-radius: 6px;
+      padding: 2px 8px;
+      font-size: 12px;
+      font-weight: 700;
+      white-space: nowrap;
+    }
+    .badge-new      { background: #dbeafe; color: #1256c9; border: 1px solid #93c5fd; }
+    .badge-progress { background: #fef9c3; color: #92400e; border: 1px solid #fde047; }
+    .badge-done     { background: #dcfce7; color: #0b7a50; border: 1px solid #86efac; }
+    .badge-rejected { background: #fee2e2; color: #b42318; border: 1px solid #fca5a5; }
+    .badge-pending  { background: #fef9c3; color: #92400e; border: 1px solid #fde047; }
+    .badge-approved { background: #dcfce7; color: #0b7a50; border: 1px solid #86efac; }
+    .badge-scheduled{ background: #dbeafe; color: #1256c9; border: 1px solid #93c5fd; }
+    .badge-sent     { background: #dcfce7; color: #0b7a50; border: 1px solid #86efac; }
+    .badge-failed   { background: #fee2e2; color: #b42318; border: 1px solid #fca5a5; }
   </style>
 </head>
 <body>
+
+{# ── Макросы перевода ─────────────────────────────────────────── #}
+{% macro app_status_badge(s) %}
+  {% if s == 'new' %}<span class="badge badge-new">Новая</span>
+  {% elif s == 'in_progress' %}<span class="badge badge-progress">В работе</span>
+  {% elif s == 'done' %}<span class="badge badge-done">Завершена</span>
+  {% elif s == 'rejected' %}<span class="badge badge-rejected">Отклонена</span>
+  {% else %}<span class="badge">{{ s }}</span>{% endif %}
+{% endmacro %}
+
+{% macro user_status_badge(s) %}
+  {% if s == 'pending' %}<span class="badge badge-pending">Ожидает</span>
+  {% elif s == 'approved' %}<span class="badge badge-approved">Подтверждён</span>
+  {% elif s == 'rejected' %}<span class="badge badge-rejected">Отклонён</span>
+  {% else %}<span class="badge">{{ s }}</span>{% endif %}
+{% endmacro %}
+
+{% macro broadcast_status_badge(s) %}
+  {% if s == 'scheduled' %}<span class="badge badge-scheduled">Запланирована</span>
+  {% elif s == 'sent' %}<span class="badge badge-sent">Отправлена</span>
+  {% elif s == 'failed' %}<span class="badge badge-failed">Ошибка</span>
+  {% else %}<span class="badge">{{ s }}</span>{% endif %}
+{% endmacro %}
+
+{% macro role_label(r) %}
+  {% if r == 'partner' %}Партнёр
+  {% elif r == 'expert' %}Эксперт
+  {% elif r == 'influencer' %}Инфлюенсер
+  {% elif r == 'all' %}Все
+  {% else %}{{ r }}{% endif %}
+{% endmacro %}
+
+{% macro source_label(s) %}
+  {% if s == 'site' %}Сайт
+  {% elif s == 'bot_booth' %}Бот (стенд)
+  {% elif s == 'no_code' %}Бот (без кода)
+  {% elif s == 'partner_application' %}Форма партнёра
+  {% else %}{{ s }}{% endif %}
+{% endmacro %}
+
   <header>
     <h1>Админ-панель Summit 2026</h1>
     <div class="top-actions">
@@ -181,9 +240,9 @@
 
     <section class="stats">
       <div class="stat"><div class="k">Пользователи</div><div class="v">{{ stats.users_total }}</div></div>
-      <div class="stat"><div class="k">Pending</div><div class="v">{{ stats.pending_users }}</div></div>
-      <div class="stat"><div class="k">Approved</div><div class="v">{{ stats.approved_users }}</div></div>
-      <div class="stat"><div class="k">Rejected</div><div class="v">{{ stats.rejected_users }}</div></div>
+      <div class="stat"><div class="k">Ожидают</div><div class="v">{{ stats.pending_users }}</div></div>
+      <div class="stat"><div class="k">Подтверждено</div><div class="v">{{ stats.approved_users }}</div></div>
+      <div class="stat"><div class="k">Отклонено</div><div class="v">{{ stats.rejected_users }}</div></div>
       <div class="stat"><div class="k">Коды</div><div class="v">{{ stats.codes_total }}</div></div>
       <div class="stat"><div class="k">Рассылки</div><div class="v">{{ stats.broadcasts_total }}</div></div>
       <div class="stat"><div class="k">Ожидают отправки</div><div class="v">{{ stats.pending_broadcasts }}</div></div>
@@ -196,7 +255,7 @@
     {% if active_tab == 'public' %}
       <section>
         <h2>Публичные настройки</h2>
-        <p class="muted">Форма заявки партнёра: <a href="/partner-application" target="_blank">/partner-application</a>{% if not bot_link_base %}. Для Telegram deep-link задайте `BOT_USERNAME`.{% endif %}</p>
+        <p class="muted">Форма заявки партнёра: <a href="/partner-application" target="_blank">/partner-application</a>{% if not bot_link_base %}. Для Telegram deep-link задайте <code>BOT_USERNAME</code>.{% endif %}</p>
         <form method="post" action="/settings/save" class="row">
           <input type="hidden" name="tab" value="{{ active_tab }}">
           <input class="c6" name="program_title" value="{{ settings_map.get('program_title', '') }}" placeholder="Название программы">
@@ -356,7 +415,7 @@
           <input class="c3" name="title" placeholder="Название" required>
           <input class="c4" name="url" placeholder="URL или file_id:..." required>
           <input class="c1" type="number" name="position" value="100">
-          <label class="c1"><input type="checkbox" name="is_active" checked> On</label>
+          <label class="c1"><input type="checkbox" name="is_active" checked> Вкл</label>
           <button class="c2" type="submit">Добавить</button>
         </form>
 
@@ -375,7 +434,7 @@
                 <input class="c3" name="title" value="{{ link.title }}" required>
                 <input class="c4" name="url" value="{{ link.url }}" required>
                 <input class="c1" type="number" name="position" value="{{ link.position }}">
-                <label class="c1"><input type="checkbox" name="is_active" {% if link.is_active %}checked{% endif %}> On</label>
+                <label class="c1"><input type="checkbox" name="is_active" {% if link.is_active %}checked{% endif %}> Вкл</label>
                 <button class="c2" type="submit">Сохранить</button>
               </form>
               <form method="post" action="/links/delete" class="row">
@@ -397,7 +456,7 @@
         <form method="post" action="/admins/add" class="row">
           <input type="hidden" name="tab" value="{{ active_tab }}">
           <input class="c4" name="telegram_id" placeholder="Telegram ID" required>
-          <input class="c6" name="note" placeholder="Комментарий">
+          <input class="c6" name="note" placeholder="Примечание">
           <button class="c2" type="submit">Добавить</button>
         </form>
         {% if env_admin_ids %}
@@ -406,7 +465,7 @@
         {% if admin_users %}
           <table>
             <thead>
-              <tr><th>Telegram ID</th><th>Комментарий</th><th>Добавлен</th><th>Действие</th></tr>
+              <tr><th>Telegram ID</th><th>Примечание</th><th>Добавлен</th><th>Действие</th></tr>
             </thead>
             <tbody>
               {% for admin in admin_users %}
@@ -435,31 +494,29 @@
         {% if applications %}
           <table>
             <thead>
-              <tr><th>ID</th><th>Источник</th><th>Статус</th><th>Telegram</th><th>Стенд</th><th>Компания</th><th>Контакт</th><th>Телефон</th><th>Email</th><th>Сообщение</th><th>Действие</th></tr>
+              <tr><th>ID</th><th>Источник</th><th>Статус</th><th>Telegram</th><th>Стенд</th><th>Компания</th><th>Контакт</th><th>Телефон</th><th>Email</th><th>Действие</th></tr>
             </thead>
             <tbody>
               {% for a in applications %}
                 <tr>
                   <td>{{ a.id }}</td>
-                  <td>{{ a.source }}</td>
-                  <td>{{ a.status }}</td>
+                  <td>{{ source_label(a.source) }}</td>
+                  <td>{{ app_status_badge(a.status) }}</td>
                   <td>{{ a.telegram_id or '-' }}</td>
                   <td>{{ a.booth_number or '-' }}</td>
                   <td>{{ a.company or '-' }}{% if a.inn %}<br><span class="muted">ИНН {{ a.inn }}</span>{% endif %}</td>
                   <td>{{ a.full_name or '-' }}</td>
                   <td>{{ a.phone or '-' }}</td>
                   <td>{{ a.email or '-' }}</td>
-                  <td>{{ a.request_text or '-' }}</td>
                   <td>
                     <form method="post" action="/applications/status" class="row">
                       <input type="hidden" name="tab" value="{{ active_tab }}">
                       <input type="hidden" name="application_id" value="{{ a.id }}">
                       <select class="c12" name="status">
-                        {% for status in application_statuses %}
-                          <option value="{{ status }}" {% if status == a.status %}selected{% endif %}>{{ status }}</option>
+                        {% for status, label in application_status_labels %}
+                          <option value="{{ status }}" {% if status == a.status %}selected{% endif %}>{{ label }}</option>
                         {% endfor %}
                       </select>
-                      <input class="c12" name="manager_note" value="{{ a.manager_note or '' }}" placeholder="Комментарий менеджера">
                       <button class="c12" type="submit">Сохранить</button>
                     </form>
                   </td>
@@ -473,11 +530,11 @@
       </section>
 
       <section>
-        <h2>Активные подключения менеджера</h2>
+        <h2>Активные сессии поддержки</h2>
         {% if support_sessions %}
           <table>
             <thead>
-              <tr><th>ID</th><th>Telegram</th><th>Support chat</th><th>Manager</th><th>Открыта</th></tr>
+              <tr><th>ID</th><th>Telegram</th><th>Чат поддержки</th><th>Менеджер</th><th>Открыта</th></tr>
             </thead>
             <tbody>
               {% for s in support_sessions %}
@@ -508,7 +565,7 @@
                 {% for u in pending_users %}
                   <tr>
                     <td>{{ u.telegram_id }}</td>
-                    <td>{{ u.role }}</td>
+                    <td>{{ role_label(u.role) }}</td>
                     <td>{{ u.subcategory or '-' }}</td>
                     <td>{{ u.full_name or u.first_name or '-' }}</td>
                     <td>{{ u.phone or '-' }}</td>
@@ -520,13 +577,13 @@
                       <form method="post" action="/users/approve" class="row">
                         <input type="hidden" name="tab" value="{{ active_tab }}">
                         <input type="hidden" name="telegram_id" value="{{ u.telegram_id }}">
-                        <button class="ok" type="submit">Approve</button>
+                        <button class="ok" type="submit">Одобрить</button>
                       </form>
                       <form method="post" action="/users/reject" class="row">
                         <input type="hidden" name="tab" value="{{ active_tab }}">
                         <input type="hidden" name="telegram_id" value="{{ u.telegram_id }}">
-                        <input type="text" name="reason" placeholder="Причина" required>
-                        <button class="danger" type="submit">Reject</button>
+                        <input type="text" name="reason" placeholder="Причина">
+                        <button class="danger" type="submit">Отклонить</button>
                       </form>
                     </td>
                   </tr>
@@ -534,7 +591,7 @@
               </tbody>
             </table>
           {% else %}
-            <div class="muted">Нет заявок в статусе pending.</div>
+            <div class="muted">Нет заявок в ожидании.</div>
           {% endif %}
         </section>
 
@@ -546,37 +603,37 @@
             <input class="c6" type="file" name="broadcast_image" accept="image/jpeg,image/png,image/webp">
             <select class="c3" name="target_role" id="broadcast-target-role" required>
               {% for target in targets %}
-                <option value="{{ target }}">{{ target }}</option>
+                <option value="{{ target }}">{{ role_label(target) }}</option>
               {% endfor %}
             </select>
             <select class="c3" name="target_subcategory" id="broadcast-target-subcategory">
               <option value="">Без подкатегории</option>
               {% for role, items in subcategories_by_role.items() %}
-                <optgroup label="{{ role }}">
+                <optgroup label="{{ role_label(role) }}">
                   {% for sub in items %}
                     <option value="{{ sub.name }}" data-role="{{ role }}">{{ sub.name }}</option>
                   {% endfor %}
                 </optgroup>
               {% endfor %}
             </select>
-            <input class="c2" type="number" min="0" name="delay_minutes" value="0">
-            <input class="c3" type="datetime-local" name="scheduled_at">
-            <div class="c5 muted">`0` = сразу. Дата/время задаются по Москве и имеют приоритет над минутами.</div>
+            <input class="c2" type="number" min="0" name="delay_minutes" value="0" title="Задержка в минутах">
+            <input class="c3" type="datetime-local" name="scheduled_at" title="Или задайте дату/время по Москве">
+            <div class="c5 muted">0 = немедленно. Дата/время по Москве имеют приоритет над минутами.</div>
             <button class="c2" type="submit">Создать</button>
           </form>
           <h3>Последние рассылки</h3>
           <table>
             <thead>
-              <tr><th>ID</th><th>Роль</th><th>Бот</th><th>Подкатегория</th><th>Статус</th><th>План</th><th>Отправлена</th><th>Контент</th><th>Действие</th></tr>
+              <tr><th>ID</th><th>Роль</th><th>Бот</th><th>Подкатегория</th><th>Статус</th><th>Запланирована</th><th>Отправлена</th><th>Содержимое</th><th>Действие</th></tr>
             </thead>
             <tbody>
               {% for b in broadcasts %}
                 <tr>
                   <td>{{ b.id }}</td>
-                  <td>{{ b.target_role }}</td>
-                  <td>{{ b.sender_role or '-' }}</td>
+                  <td>{{ role_label(b.target_role) }}</td>
+                  <td>{{ role_label(b.sender_role) if b.sender_role else '-' }}</td>
                   <td>{{ b.target_subcategory or '-' }}</td>
-                  <td>{{ b.status }}</td>
+                  <td>{{ broadcast_status_badge(b.status) }}</td>
                   <td>{{ b.scheduled_at or '-' }}</td>
                   <td>{{ b.sent_at or '-' }}</td>
                   <td>{% if b.image_path or b.image_filename %}🖼 {% endif %}{{ (b.message_text or '')[:120] or '-' }}</td>
@@ -588,7 +645,7 @@
                         <button class="danger c12" type="submit">Удалить</button>
                       </form>
                     {% else %}
-                      <span class="muted">/delete_broadcast {{ b.id }}</span>
+                      <span class="muted">—</span>
                     {% endif %}
                   </td>
                 </tr>
@@ -603,7 +660,7 @@
         <table>
           <thead>
             <tr>
-              <th>ID</th><th>Telegram</th><th>Role</th><th>Подкатегория</th><th>Status</th><th>Имя</th><th>Телефон</th><th>Email</th><th>Компания</th><th>ИНН</th><th>Согласие</th><th>Код</th><th>Рефкод</th><th>Реферер</th><th>Регистрация</th>
+              <th>ID</th><th>Telegram</th><th>Роль</th><th>Подкатегория</th><th>Статус</th><th>Имя</th><th>Телефон</th><th>Email</th><th>Компания</th><th>ИНН</th><th>Согласие</th><th>Код</th><th>Рефкод</th><th>Реферер</th><th>Регистрация</th>
             </tr>
           </thead>
           <tbody>
@@ -611,9 +668,9 @@
               <tr>
                 <td>{{ u.id }}</td>
                 <td>{{ u.telegram_id }}</td>
-                <td>{{ u.role }}</td>
+                <td>{{ role_label(u.role) }}</td>
                 <td>{{ u.subcategory or '-' }}</td>
-                <td>{{ u.access_status }}</td>
+                <td>{{ user_status_badge(u.access_status) }}</td>
                 <td>{{ u.full_name or u.first_name or '-' }}</td>
                 <td>{{ u.phone or '-' }}</td>
                 <td>{{ u.email or '-' }}</td>
@@ -634,15 +691,15 @@
         <h2>Отзывы</h2>
         <table>
           <thead>
-            <tr><th>ID</th><th>Telegram</th><th>Role</th><th>Источник</th><th>Текст</th><th>Дата</th></tr>
+            <tr><th>ID</th><th>Telegram</th><th>Роль</th><th>Источник</th><th>Текст</th><th>Дата</th></tr>
           </thead>
           <tbody>
             {% for f in feedback_items %}
               <tr>
                 <td>{{ f.id }}</td>
                 <td>{{ f.telegram_id }}</td>
-                <td>{{ f.user_role or '-' }}</td>
-                <td>{{ f.source }}</td>
+                <td>{{ role_label(f.user_role) if f.user_role else '-' }}</td>
+                <td>{{ source_label(f.source) }}</td>
                 <td>{{ f.message_text }}</td>
                 <td>{{ f.created_at }}</td>
               </tr>

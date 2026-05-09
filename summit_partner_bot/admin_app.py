@@ -366,6 +366,12 @@ def create_app() -> FastAPI:
                 "feedback_items": feedback_items,
                 "applications": applications,
                 "application_statuses": APPLICATION_STATUSES,
+                "application_status_labels": [
+                    (APPLICATION_STATUS_NEW, "Новая"),
+                    (APPLICATION_STATUS_IN_PROGRESS, "В работе"),
+                    (APPLICATION_STATUS_DONE, "Завершена"),
+                    (APPLICATION_STATUS_REJECTED, "Отклонена"),
+                ],
                 "support_sessions": support_sessions,
                 "admin_users": admin_users,
                 "env_admin_ids": sorted(settings.admin_ids),

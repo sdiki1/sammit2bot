@@ -2248,15 +2248,33 @@ async def create_dispatcher(
         for chat_id in settings.support_chat_ids:
             try:
                 meta_message = await message.bot.send_message(chat_id=chat_id, text=question_header)
+                delivered_to_support += 1
+            except Exception:  # noqa: BLE001
+                logger.exception("Failed to deliver support header to chat %s", chat_id)
+                continue
+            try:
                 await message.bot.copy_message(
                     chat_id=chat_id,
                     from_chat_id=message.chat.id,
                     message_id=message.message_id,
                     reply_to_message_id=meta_message.message_id,
                 )
-                delivered_to_support += 1
             except Exception:  # noqa: BLE001
-                logger.exception("Failed to deliver support question to chat %s", chat_id)
+                try:
+                    await message.bot.copy_message(
+                        chat_id=chat_id,
+                        from_chat_id=message.chat.id,
+                        message_id=message.message_id,
+                    )
+                except Exception:  # noqa: BLE001
+                    try:
+                        await message.bot.forward_message(
+                            chat_id=chat_id,
+                            from_chat_id=message.chat.id,
+                            message_id=message.message_id,
+                        )
+                    except Exception:  # noqa: BLE001
+                        logger.exception("Failed to copy/forward user message to support chat %s", chat_id)
 
         await state.clear()
         if delivered_to_support:
