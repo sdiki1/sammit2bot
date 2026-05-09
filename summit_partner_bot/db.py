@@ -275,6 +275,22 @@ class Database:
                     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
                 );
 
+                CREATE TABLE IF NOT EXISTS consent_documents (
+                    id BIGSERIAL PRIMARY KEY,
+                    bot_key TEXT NOT NULL,
+                    filename TEXT NOT NULL,
+                    file_bytes BYTEA NOT NULL,
+                    cached_file_id TEXT,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                );
+
+                CREATE TABLE IF NOT EXISTS user_bot_consents (
+                    telegram_id BIGINT NOT NULL,
+                    bot_key TEXT NOT NULL,
+                    accepted_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    PRIMARY KEY (telegram_id, bot_key)
+                );
+
                 CREATE TABLE IF NOT EXISTS referral_clicks (
                     id BIGSERIAL PRIMARY KEY,
                     owner_telegram_id BIGINT NOT NULL,
@@ -1734,3 +1750,59 @@ class Database:
             "new_applications": new_applications,
             "active_support_sessions": active_support_sessions,
         }
+
+    # ── Согласия ──────────────────────────────────────────────────
+
+    async def get_consent_documents(self, bot_key: str) -> list[asyncpg.Record]:
+        async with self.pool.acquire() as conn:
+            return await conn.fetch(
+                "SELECT * FROM consent_documents WHERE bot_key = $1 ORDER BY created_at",
+                bot_key,
+            )
+
+    async def get_all_consent_documents(self) -> list[asyncpg.Record]:
+        async with self.pool.acquire() as conn:
+            return await conn.fetch("SELECT * FROM consent_documents ORDER BY bot_key, created_at")
+
+    async def save_consent_document(self, bot_key: str, filename: str, file_bytes: bytes) -> asyncpg.Record:
+        async with self.pool.acquire() as conn:
+            return await conn.fetchrow(
+                "INSERT INTO consent_documents(bot_key, filename, file_bytes) VALUES($1, $2, $3) RETURNING *",
+                bot_key,
+                filename,
+                file_bytes,
+            )
+
+    async def delete_consent_document(self, doc_id: int) -> bool:
+        async with self.pool.acquire() as conn:
+            result = await conn.execute("DELETE FROM consent_documents WHERE id = $1", doc_id)
+            return result == "DELETE 1"
+
+    async def update_consent_cached_file_id(self, doc_id: int, file_id: str) -> None:
+        async with self.pool.acquire() as conn:
+            await conn.execute(
+                "UPDATE consent_documents SET cached_file_id = $2 WHERE id = $1",
+                doc_id,
+                file_id,
+            )
+
+    async def is_bot_consent_accepted(self, telegram_id: int, bot_key: str) -> bool:
+        async with self.pool.acquire() as conn:
+            row = await conn.fetchrow(
+                "SELECT 1 FROM user_bot_consents WHERE telegram_id = $1 AND bot_key = $2",
+                telegram_id,
+                bot_key,
+            )
+            return row is not None
+
+    async def accept_bot_consent(self, telegram_id: int, bot_key: str) -> None:
+        async with self.pool.acquire() as conn:
+            await conn.execute(
+                """
+                INSERT INTO user_bot_consents(telegram_id, bot_key)
+                VALUES($1, $2)
+                ON CONFLICT(telegram_id, bot_key) DO NOTHING
+                """,
+                telegram_id,
+                bot_key,
+            )

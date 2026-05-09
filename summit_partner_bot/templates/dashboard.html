@@ -156,6 +156,10 @@
 
     .block { border: 1px solid var(--line); border-radius: 10px; padding: 10px; margin-bottom: 10px; }
 
+    /* Формы внутри ячеек таблицы — одна колонка, кнопки на всю ширину */
+    td form.row { grid-template-columns: 1fr; }
+    td form.row button { width: 100%; }
+
     /* Бейджи статусов заявок */
     .badge {
       display: inline-block;
@@ -403,6 +407,43 @@
     {% endif %}
 
     {% if active_tab in ['public', 'partners', 'experts', 'influencers'] %}
+      {% set current_bot_key = tab_bot_key.get(active_tab, 'summit') %}
+      <section>
+        <h2>Документы согласия</h2>
+        <p class="muted">Файлы, которые бот отправляет новому пользователю перед началом работы. Пользователь должен нажать «Согласен», иначе бот не откроет меню.</p>
+        {% set current_consent_docs = consent_docs_by_bot.get(current_bot_key, []) %}
+        {% if current_consent_docs %}
+          <table>
+            <thead>
+              <tr><th>ID</th><th>Файл</th><th>Загружен</th><th>Действие</th></tr>
+            </thead>
+            <tbody>
+              {% for doc in current_consent_docs %}
+                <tr>
+                  <td>{{ doc.id }}</td>
+                  <td>{{ doc.filename }}</td>
+                  <td>{{ doc.created_at }}</td>
+                  <td>
+                    <form method="post" action="/consents/delete" class="row">
+                      <input type="hidden" name="tab" value="{{ active_tab }}">
+                      <input type="hidden" name="doc_id" value="{{ doc.id }}">
+                      <button class="danger" type="submit">Удалить</button>
+                    </form>
+                  </td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        {% else %}
+          <div class="muted">Документов согласия нет — бот не будет показывать экран подтверждения.</div>
+        {% endif %}
+        <form method="post" action="/consents/upload" enctype="multipart/form-data" class="row">
+          <input type="hidden" name="tab" value="{{ active_tab }}">
+          <input class="c8" type="file" name="consent_file" accept=".pdf,.docx,.doc,.txt" required>
+          <button class="c4" type="submit">Загрузить документ</button>
+        </form>
+      </section>
+
       <section>
         <h2>Ссылки и материалы</h2>
         <form method="post" action="/links/add" class="block row">

@@ -87,6 +87,7 @@ from summit_partner_bot.middlewares import RateLimitMiddleware
 from summit_partner_bot.states import (
     AccessRequestFlow,
     BoothBookingFlow,
+    ConsentFlow,
     FeedbackFlow,
     NavigationFlow,
     NoCodeRegistrationFlow,
@@ -1066,6 +1067,43 @@ def _extract_media_file_id(message: Message) -> tuple[str, str] | None:
     return None
 
 
+async def _ask_bot_consent(
+    message: Message,
+    state: FSMContext,
+    db: Database,
+    bot_key: str,
+) -> bool:
+    """Отправляет документы согласия и возвращает True, если пользователь ещё не принял их."""
+    if not message.from_user:
+        return False
+    docs = await db.get_consent_documents(bot_key)
+    if not docs:
+        return False
+    if await db.is_bot_consent_accepted(message.from_user.id, bot_key):
+        return False
+
+    for doc in docs:
+        try:
+            if doc["cached_file_id"]:
+                sent = await message.answer_document(document=doc["cached_file_id"])
+            else:
+                file = BufferedInputFile(bytes(doc["file_bytes"]), filename=doc["filename"])
+                sent = await message.answer_document(document=file)
+                if sent.document:
+                    await db.update_consent_cached_file_id(int(doc["id"]), sent.document.file_id)
+        except Exception:  # noqa: BLE001
+            logger.exception("Failed to send consent document %s to %s", doc["id"], message.from_user.id)
+
+    from summit_partner_bot.keyboards import consent_keyboard as _ck
+    await message.answer(
+        "Продолжая пользоваться ботом, вы подтверждаете что изучили и согласны с этими документами.",
+        reply_markup=_ck(),
+    )
+    await state.set_state(ConsentFlow.waiting_agreement)
+    await state.update_data(_consent_bot_key=bot_key)
+    return True
+
+
 async def create_dispatcher(
     bot: Bot,
     db: Database,
@@ -1092,6 +1130,33 @@ async def create_dispatcher(
     dp.message.middleware(RateLimitMiddleware(settings.rate_limit_seconds))
     dp.callback_query.middleware(RateLimitMiddleware(settings.rate_limit_seconds))
 
+    @router.message(ConsentFlow.waiting_agreement)
+    async def handle_consent_agreement(message: Message, state: FSMContext) -> None:
+        if not message.from_user:
+            return
+        if (message.text or "").strip() != BTN_CONSENT_ACCEPT:
+            from summit_partner_bot.keyboards import consent_keyboard as _ck
+            await message.answer(
+                "Пожалуйста, нажмите «✅ Согласен» для продолжения.",
+                reply_markup=_ck(),
+            )
+            return
+        data = await state.get_data()
+        bot_key = str(data.get("_consent_bot_key", profile.key))
+        await db.accept_bot_consent(message.from_user.id, bot_key)
+        await state.clear()
+        if not profile_role:
+            await _show_public_menu(message, content_loader)
+        else:
+            user_row = await db.get_user(message.from_user.id)
+            if _is_access_granted(user_row):
+                await _show_private_menu(message, db, settings, content_loader, include_public_menu=include_public_menu)
+            else:
+                await message.answer(
+                    f"Введите код приглашения для роли «{role_title(profile_role)}».",
+                    reply_markup=code_or_register_keyboard(),
+                )
+
     @router.message(CommandStart())
     async def cmd_start(message: Message, state: FSMContext) -> None:
         if not message.from_user:
@@ -1109,6 +1174,9 @@ async def create_dispatcher(
                 username=message.from_user.username,
                 first_name=message.from_user.first_name,
             )
+
+        if await _ask_bot_consent(message, state, db, profile.key):
+            return
 
         ref_match = REF_START_RE.match(raw_payload)
         if ref_match:

@@ -64,6 +64,13 @@ TAB_EXPERTS = "experts"
 TAB_INFLUENCERS = "influencers"
 TAB_SYSTEM = "system"
 
+TAB_BOT_KEY = {
+    TAB_PUBLIC: "summit",
+    TAB_PARTNERS: "partner",
+    TAB_EXPERTS: "expert",
+    TAB_INFLUENCERS: "influencer",
+}
+
 TAB_ORDER = [TAB_PUBLIC, TAB_PARTNERS, TAB_EXPERTS, TAB_INFLUENCERS, TAB_SYSTEM]
 TAB_TITLES = {
     TAB_PUBLIC: "Публичное",
@@ -326,6 +333,11 @@ def create_app() -> FastAPI:
         admin_users = await db.list_admin_users()
         settings_map = await db.get_content_settings_map()
 
+        all_consent_docs = await db.get_all_consent_documents()
+        consent_docs_by_bot: dict[str, list[Any]] = {}
+        for doc in all_consent_docs:
+            consent_docs_by_bot.setdefault(str(doc["bot_key"]), []).append(doc)
+
         links_all = await db.list_all_content_links(include_inactive=True)
         links_by_section: dict[str, list[Any]] = {}
         for row in links_all:
@@ -385,6 +397,8 @@ def create_app() -> FastAPI:
                 "active_tab": active_tab,
                 "tabs": [(tab, TAB_TITLES[tab]) for tab in TAB_ORDER],
                 "bot_link_base": _bot_link_base(settings),
+                "consent_docs_by_bot": consent_docs_by_bot,
+                "tab_bot_key": TAB_BOT_KEY,
             },
         )
 
@@ -744,6 +758,38 @@ def create_app() -> FastAPI:
             _set_flash(request, f"Рассылка создана и будет отправлена в ближайший цикл планировщика. Получателей: {recipients_count}. ID: {', '.join(map(str, broadcast_ids))}.")
         else:
             _set_flash(request, f"Рассылка запланирована через {minutes} мин. Получателей: {recipients_count}. ID: {', '.join(map(str, broadcast_ids))}.")
+        return _redirect(_dashboard_url(_sanitize_tab(tab)))
+
+    @app.post("/consents/upload")
+    async def upload_consent_document(
+        request: Request,
+        consent_file: UploadFile = File(...),
+        tab: str = Form(TAB_PUBLIC),
+    ) -> RedirectResponse:
+        maybe_redirect = _require_auth(request)
+        if maybe_redirect is not None:
+            return maybe_redirect
+        bot_key = TAB_BOT_KEY.get(_sanitize_tab(tab), "summit")
+        filename = (consent_file.filename or "document.pdf").strip()
+        data = await consent_file.read()
+        if not data:
+            _set_flash(request, "Файл пустой.")
+            return _redirect(_dashboard_url(_sanitize_tab(tab)))
+        await db.save_consent_document(bot_key=bot_key, filename=filename, file_bytes=data)
+        _set_flash(request, f"Документ «{filename}» загружен.")
+        return _redirect(_dashboard_url(_sanitize_tab(tab)))
+
+    @app.post("/consents/delete")
+    async def delete_consent_document(
+        request: Request,
+        doc_id: int = Form(...),
+        tab: str = Form(TAB_PUBLIC),
+    ) -> RedirectResponse:
+        maybe_redirect = _require_auth(request)
+        if maybe_redirect is not None:
+            return maybe_redirect
+        deleted = await db.delete_consent_document(doc_id)
+        _set_flash(request, "Документ удалён." if deleted else "Документ не найден.")
         return _redirect(_dashboard_url(_sanitize_tab(tab)))
 
     @app.post("/broadcasts/delete")
