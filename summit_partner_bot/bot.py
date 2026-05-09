@@ -2066,26 +2066,22 @@ async def create_dispatcher(
 
     @router.message(F.text == BTN_BOOTH_BOOKING)
     async def start_booth_booking(message: Message, state: FSMContext) -> None:
-        user_row = await _ensure_private_user(
-            message,
-            db,
-            content_loader,
-            required_role=ROLE_PARTNER,
-            include_public_menu=include_public_menu,
-        )
-        if user_row is None:
+        if not message.from_user:
             return
-
-        await state.set_state(BoothBookingFlow.waiting_booth)
-        await state.set_data(
-            {
+        user_row = await db.get_user(message.from_user.id) if not profile_role else await _ensure_private_user(
+            message, db, content_loader, include_public_menu=include_public_menu
+        )
+        prefill: dict = {}
+        if user_row is not None:
+            prefill = {
                 "booking_company": str(user_row.get("company") or ""),
                 "booking_contact_name": str(user_row.get("full_name") or user_row.get("first_name") or ""),
                 "booking_phone": str(user_row.get("phone") or ""),
                 "booking_email": str(user_row.get("email") or ""),
                 "booking_inn": str(user_row.get("inn") or ""),
             }
-        )
+        await state.set_state(BoothBookingFlow.waiting_booth)
+        await state.set_data(prefill)
         await message.answer(
             "🏗 Укажите номер стенда, который хотите забронировать (например: А1.16):",
             reply_markup=cancel_keyboard(),
@@ -2138,24 +2134,16 @@ async def create_dispatcher(
 
     @router.message(BoothBookingFlow.waiting_email)
     async def booking_email(message: Message, state: FSMContext) -> None:
+        if not message.from_user:
+            return
         email = (message.text or "").strip()
         if not EMAIL_RE.match(email):
             await message.answer("⚠️ Укажите корректный email.")
             return
         await state.update_data(booking_email=email)
-        await state.set_state(BoothBookingFlow.waiting_comment)
-        await message.answer("✍️ Добавьте комментарий к заявке или отправьте «-», если комментария нет.")
-
-    @router.message(BoothBookingFlow.waiting_comment)
-    async def booking_comment(message: Message, state: FSMContext) -> None:
-        if not message.from_user:
-            return
-        comment = (message.text or "").strip()
-        if comment == "-":
-            comment = ""
         data = await state.get_data()
         token = f"bot{message.from_user.id}{int(datetime.now(timezone.utc).timestamp())}"
-        request_text = comment or f"Хочу забронировать стенд {data.get('booking_booth')}"
+        request_text = f"Бронирование стенда {data.get('booking_booth', '')}"
         application = await db.create_application(
             token=token,
             role=ROLE_PARTNER,
@@ -2164,7 +2152,7 @@ async def create_dispatcher(
             booth_number=str(data.get("booking_booth", "")),
             full_name=str(data.get("booking_contact_name", "")),
             phone=str(data.get("booking_phone", "")),
-            email=str(data.get("booking_email", "")),
+            email=email,
             company=str(data.get("booking_company", "")),
             inn=str(data.get("booking_inn", "")),
             telegram_id=message.from_user.id,
@@ -2181,14 +2169,15 @@ async def create_dispatcher(
             booth_number=str(data.get("booking_booth", "")),
             full_name=str(data.get("booking_contact_name", "")),
             phone=str(data.get("booking_phone", "")),
-            email=str(data.get("booking_email", "")),
+            email=email,
             company=str(data.get("booking_company", "")),
             inn=str(data.get("booking_inn", "")),
         )
         await state.clear()
+        reply_kb = public_menu_keyboard() if include_public_menu else private_keyboard(ROLE_PARTNER)
         await message.answer(
-            "✅ Заявка на бронирование стенда отправлена. Менеджер увидит её в админ-панели.",
-            reply_markup=private_keyboard(ROLE_PARTNER),
+            "✅ Заявка на бронирование стенда отправлена. Менеджер свяжется с вами в ближайшее время.",
+            reply_markup=reply_kb,
         )
 
     @router.message(F.text == BTN_MANAGER)
