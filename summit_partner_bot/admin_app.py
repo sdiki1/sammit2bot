@@ -554,6 +554,16 @@ def create_app() -> FastAPI:
                 manager_telegram_id=None,
                 bot_key=chosen_key,
             )
+            existing_session = await db.get_active_support_session(telegram_id)
+            if existing_session is None:
+                support_chat_id = next(iter(settings.support_chat_ids)) if settings.support_chat_ids else (
+                    next(iter(settings.admin_ids)) if settings.admin_ids else 0
+                )
+                await db.connect_support_session(
+                    telegram_id=telegram_id,
+                    support_chat_id=support_chat_id,
+                    manager_telegram_id=None,
+                )
             _set_flash(request, "✅ Сообщение отправлено пользователю.")
         except TelegramForbiddenError:
             _set_flash(request, "⚠️ Пользователь заблокировал бота. Сообщение не доставлено.")

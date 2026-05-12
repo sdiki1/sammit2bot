@@ -1194,6 +1194,58 @@ async def create_dispatcher(
     dp.message.middleware(RateLimitMiddleware(settings.rate_limit_seconds))
     dp.callback_query.middleware(RateLimitMiddleware(settings.rate_limit_seconds))
 
+    async def _user_in_active_support(message: Message) -> bool:
+        if not message.from_user:
+            return False
+        if message.chat.id in settings.support_chat_ids:
+            return False
+        text = (message.text or "").strip()
+        if text == BTN_CLOSE_CHAT:
+            return False
+        if text.startswith("/"):
+            return False
+        active = await db.get_active_support_session(message.from_user.id)
+        return active is not None
+
+    @router.message(_user_in_active_support)
+    async def relay_to_active_support(message: Message, state: FSMContext) -> None:
+        if not message.from_user:
+            return
+        active = await db.get_active_support_session(message.from_user.id)
+        if active is None:
+            return
+
+        username = f"@{message.from_user.username}" if message.from_user.username else "—"
+        header = (
+            "💬 Сообщение в активном диалоге\n"
+            f"#USER_{message.from_user.id}\n"
+            f"Username: {username}"
+        )
+        try:
+            meta_message = await message.bot.send_message(
+                chat_id=int(active["support_chat_id"]),
+                text=header,
+            )
+            await message.bot.copy_message(
+                chat_id=int(active["support_chat_id"]),
+                from_chat_id=message.chat.id,
+                message_id=message.message_id,
+                reply_to_message_id=meta_message.message_id,
+            )
+            await _log_chat_message(
+                db=db,
+                user_telegram_id=message.from_user.id,
+                direction="user",
+                message=message,
+                bot_key=profile.key,
+            )
+        except Exception:  # noqa: BLE001
+            logger.exception("Failed to relay active support message from %s", message.from_user.id)
+            await message.answer(
+                "⚠️ Не удалось отправить сообщение менеджеру. Попробуйте позже.",
+                reply_markup=support_chat_keyboard(),
+            )
+
     @router.message(ConsentFlow.waiting_agreement)
     async def handle_consent_agreement(message: Message, state: FSMContext) -> None:
         if not message.from_user:
@@ -2520,7 +2572,15 @@ async def create_dispatcher(
             f"Чтобы закрыть диалог: /disconnect_user {user_id}"
         )
         try:
-            await message.bot.send_message(chat_id=user_id, text="🧑‍💼 Менеджер подключился к диалогу.")
+            await message.bot.send_message(
+                chat_id=user_id,
+                text=(
+                    "🧑‍💼 Менеджер подключился к диалогу.\n"
+                    "Все ваши сообщения теперь уходят менеджеру. "
+                    "Чтобы выйти — нажмите «❌ Завершить чат»."
+                ),
+                reply_markup=support_chat_keyboard(),
+            )
         except Exception:  # noqa: BLE001
             logger.exception("Failed to notify user about manager connect %s", user_id)
 
