@@ -1767,6 +1767,19 @@ class Database:
 
     # ── Согласия ──────────────────────────────────────────────────
 
+    async def get_last_chat_bot_key(self, telegram_id: int) -> str | None:
+        async with self.pool.acquire() as conn:
+            row = await conn.fetchrow(
+                """
+                SELECT bot_key FROM support_messages
+                WHERE telegram_id = $1 AND bot_key IS NOT NULL AND bot_key <> ''
+                ORDER BY created_at DESC, id DESC
+                LIMIT 1
+                """,
+                telegram_id,
+            )
+            return str(row["bot_key"]) if row else None
+
     async def log_support_message(
         self,
         telegram_id: int,

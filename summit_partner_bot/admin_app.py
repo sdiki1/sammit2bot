@@ -173,6 +173,27 @@ def _guess_upload_suffix(upload: UploadFile) -> str:
     return ""
 
 
+def _bot_token_for_user(settings: Any, role: str | None, bot_key: str | None) -> tuple[str, str]:
+    table = {
+        "summit": settings.summit_bot_token,
+        "partner": settings.partner_bot_token,
+        "expert": settings.expert_bot_token,
+        "influencer": settings.influencer_bot_token,
+    }
+    candidates: list[str] = []
+    if bot_key:
+        candidates.append(bot_key)
+    if role and role not in candidates:
+        candidates.append(role)
+    if "summit" not in candidates:
+        candidates.append("summit")
+    for key in candidates:
+        token = table.get(key, "")
+        if token:
+            return token, key
+    return settings.summit_bot_token, "summit"
+
+
 def _parse_admin_datetime(value: str | None) -> datetime | None:
     text = (value or "").strip()
     if not text:
@@ -416,6 +437,9 @@ def create_app() -> FastAPI:
 
         messages = await db.list_support_messages(telegram_id=telegram_id, limit=2000)
         user_row = await db.get_user(telegram_id)
+        last_bot_key = await db.get_last_chat_bot_key(telegram_id)
+        role = str(user_row["role"]) if user_row else None
+        _, chosen_bot_key = _bot_token_for_user(settings, role, last_bot_key)
         return templates.TemplateResponse(
             request=request,
             name="chat.html",
@@ -425,8 +449,85 @@ def create_app() -> FastAPI:
                 "messages": messages,
                 "user": user_row,
                 "settings": settings,
+                "active_bot_key": chosen_bot_key,
             },
         )
+
+    @app.post("/chats/{telegram_id}/send")
+    async def chat_send(
+        request: Request,
+        telegram_id: int,
+        message_text: str = Form(""),
+        attachment: UploadFile | None = File(default=None),
+    ) -> RedirectResponse:
+        maybe_redirect = _require_auth(request)
+        if maybe_redirect is not None:
+            return maybe_redirect
+
+        from aiogram import Bot
+        from aiogram.exceptions import TelegramAPIError, TelegramForbiddenError
+        from aiogram.types import BufferedInputFile
+
+        text = (message_text or "").strip()
+        user_row = await db.get_user(telegram_id)
+        last_bot_key = await db.get_last_chat_bot_key(telegram_id)
+        role = str(user_row["role"]) if user_row else None
+        token, chosen_key = _bot_token_for_user(settings, role, last_bot_key)
+
+        if not token:
+            _set_flash(request, "Не настроен токен бота для отправки.")
+            return _redirect(f"/chats/{telegram_id}")
+
+        has_attachment = attachment is not None and (attachment.filename or "").strip()
+        if not text and not has_attachment:
+            _set_flash(request, "Введите текст или приложите файл.")
+            return _redirect(f"/chats/{telegram_id}")
+
+        bot = Bot(token=token)
+        sent_media_type: str | None = None
+        sent_file_id: str | None = None
+        try:
+            if has_attachment:
+                data = await attachment.read()
+                content_type = (attachment.content_type or "").lower()
+                filename = (attachment.filename or "file").strip() or "file"
+                input_file = BufferedInputFile(data, filename=filename)
+                if content_type.startswith("image/"):
+                    sent = await bot.send_photo(chat_id=telegram_id, photo=input_file, caption=text or None)
+                    sent_media_type = "photo"
+                    if sent.photo:
+                        sent_file_id = sent.photo[-1].file_id
+                elif content_type.startswith("video/"):
+                    sent = await bot.send_video(chat_id=telegram_id, video=input_file, caption=text or None)
+                    sent_media_type = "video"
+                    if sent.video:
+                        sent_file_id = sent.video.file_id
+                else:
+                    sent = await bot.send_document(chat_id=telegram_id, document=input_file, caption=text or None)
+                    sent_media_type = "document"
+                    if sent.document:
+                        sent_file_id = sent.document.file_id
+            else:
+                await bot.send_message(chat_id=telegram_id, text=text)
+
+            await db.log_support_message(
+                telegram_id=telegram_id,
+                direction="manager",
+                text=text or None,
+                media_type=sent_media_type,
+                file_id=sent_file_id,
+                manager_telegram_id=None,
+                bot_key=chosen_key,
+            )
+            _set_flash(request, "✅ Сообщение отправлено пользователю.")
+        except TelegramForbiddenError:
+            _set_flash(request, "⚠️ Пользователь заблокировал бота. Сообщение не доставлено.")
+        except TelegramAPIError as exc:
+            _set_flash(request, f"⚠️ Ошибка Telegram: {exc}")
+        finally:
+            await bot.session.close()
+
+        return _redirect(f"/chats/{telegram_id}")
 
     @app.post("/codes/add")
     async def add_code(

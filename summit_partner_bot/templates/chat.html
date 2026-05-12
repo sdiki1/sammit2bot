@@ -114,6 +114,75 @@
       font-size: 12px;
     }
     .empty { text-align: center; color: var(--muted); padding: 24px; }
+
+    .flash {
+      background: #f0f8ff;
+      border: 1px solid #bae1ff;
+      color: #1d4c82;
+      border-radius: 10px;
+      padding: 10px 12px;
+      font-weight: 700;
+    }
+    .composer {
+      position: sticky;
+      bottom: 0;
+      background: var(--card);
+      border-top: 1px solid var(--line);
+      padding-top: 10px;
+      margin-top: 6px;
+    }
+    .composer form {
+      display: grid;
+      gap: 8px;
+      grid-template-columns: 1fr auto auto;
+      align-items: end;
+    }
+    .composer textarea {
+      width: 100%;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: 10px;
+      font-size: 14px;
+      font-family: inherit;
+      min-height: 70px;
+      resize: vertical;
+      background: #fff;
+    }
+    .composer .file-wrap {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      align-items: stretch;
+    }
+    .composer input[type="file"] {
+      max-width: 220px;
+      font-size: 12px;
+    }
+    .composer button {
+      border: 0;
+      border-radius: 10px;
+      background: var(--accent);
+      color: #fff;
+      padding: 12px 18px;
+      font-weight: 700;
+      cursor: pointer;
+      white-space: nowrap;
+      height: fit-content;
+    }
+    .bot-tag {
+      display: inline-block;
+      background: #e8effb;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      padding: 2px 10px;
+      font-size: 12px;
+      color: var(--muted);
+      font-weight: 700;
+    }
+    @media (max-width: 720px) {
+      .composer form { grid-template-columns: 1fr; }
+      .composer input[type="file"] { max-width: 100%; }
+    }
   </style>
 </head>
 <body>
@@ -126,9 +195,13 @@
   </header>
 
   <main>
+    {% if flash %}
+      <div class="flash">{{ flash }}</div>
+    {% endif %}
     <div class="card">
       <div class="meta-row">
         <div><b>Telegram ID:</b> {{ telegram_id }}</div>
+        <div><b>Бот для ответа:</b> <span class="bot-tag">{{ active_bot_key }}</span></div>
         {% if user %}
           <div><b>Имя:</b> {{ user.full_name or user.first_name or '—' }}</div>
           <div><b>Username:</b> {% if user.username %}@{{ user.username }}{% else %}—{% endif %}</div>
@@ -172,7 +245,37 @@
       {% else %}
         <div class="empty">Сообщений в переписке нет.</div>
       {% endif %}
+
+      <div class="composer">
+        <form method="post" action="/chats/{{ telegram_id }}/send" enctype="multipart/form-data" id="chat-form">
+          <textarea name="message_text" placeholder="Напишите сообщение пользователю…"></textarea>
+          <div class="file-wrap">
+            <label class="muted">Вложение (необязательно):</label>
+            <input type="file" name="attachment" accept="image/*,video/*,application/pdf,.doc,.docx,.xls,.xlsx,.zip">
+          </div>
+          <button type="submit">Отправить</button>
+        </form>
+        <div class="muted" style="margin-top:6px;">Сообщение уйдёт пользователю от бота <b>{{ active_bot_key }}</b> и появится в переписке после обновления страницы.</div>
+      </div>
     </div>
   </main>
+
+  <script>
+    // Submit on Ctrl+Enter / Cmd+Enter
+    const form = document.getElementById('chat-form');
+    const textarea = form && form.querySelector('textarea');
+    if (textarea) {
+      textarea.addEventListener('keydown', (e) => {
+        if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+          e.preventDefault();
+          form.submit();
+        }
+      });
+    }
+    // Scroll to bottom on load
+    window.addEventListener('load', () => {
+      window.scrollTo(0, document.body.scrollHeight);
+    });
+  </script>
 </body>
 </html>
