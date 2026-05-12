@@ -13,7 +13,14 @@ from aiogram.exceptions import TelegramForbiddenError
 from aiogram.filters import Command, CommandStart
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.storage.memory import MemoryStorage
-from aiogram.types import BufferedInputFile, InlineKeyboardMarkup, Message, ReplyKeyboardMarkup
+from aiogram.types import (
+    BufferedInputFile,
+    CallbackQuery,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    Message,
+    ReplyKeyboardMarkup,
+)
 
 from summit_partner_bot.broadcasts import BroadcastScheduler, parse_iso_datetime, send_broadcast
 from summit_partner_bot.config import BotProfile, Settings
@@ -2562,14 +2569,26 @@ async def create_dispatcher(
         if support_chat_id not in settings.support_chat_ids and settings.support_chat_ids:
             support_chat_id = next(iter(settings.support_chat_ids))
 
+        prior = await db.get_active_session_by_manager(message.from_user.id)
+        if prior is not None and int(prior["telegram_id"]) != user_id:
+            await db.close_active_sessions_for_manager(message.from_user.id)
+            await message.answer(
+                f"ℹ️ Предыдущий диалог с {int(prior['telegram_id'])} закрыт автоматически."
+            )
+
         await db.connect_support_session(
             telegram_id=user_id,
             support_chat_id=support_chat_id,
             manager_telegram_id=message.from_user.id,
         )
+        close_kb = InlineKeyboardMarkup(
+            inline_keyboard=[[InlineKeyboardButton(text="❌ Завершить чат", callback_data=f"close_chat:{user_id}")]]
+        )
         await message.answer(
-            f"✅ Менеджер подключён к пользователю {user_id}.\n"
-            f"Чтобы закрыть диалог: /disconnect_user {user_id}"
+            f"✅ Подключено к пользователю {user_id}.\n"
+            "Все ваши сообщения в этот чат пересылаются ему.\n"
+            f"Закрыть: кнопка ниже или /close_chat / /disconnect_user {user_id}",
+            reply_markup=close_kb,
         )
         try:
             await message.bot.send_message(
@@ -3187,6 +3206,112 @@ async def create_dispatcher(
             f"Удалено: {deleted_count}\n"
             f"Ошибок: {failed_count}"
         )
+
+    @router.message(Command("close_chat"))
+    async def manager_close_chat(message: Message) -> None:
+        if not message.from_user:
+            return
+        if message.chat.id not in settings.support_chat_ids and not await _is_admin_message(message, settings, db):
+            return
+        session = await db.get_active_session_by_manager(message.from_user.id)
+        if session is None:
+            await message.reply("Нет активного диалога.")
+            return
+        user_id = int(session["telegram_id"])
+        await db.close_support_session(user_id)
+        await message.reply(f"✅ Диалог с {user_id} закрыт.")
+        try:
+            user_row = await db.get_user(user_id)
+            kb = private_keyboard(str(user_row["role"])) if user_row else public_menu_keyboard()
+            await message.bot.send_message(
+                chat_id=user_id,
+                text="🧑‍💼 Менеджер завершил диалог. Если будет нужно — обращайтесь снова.",
+                reply_markup=kb,
+            )
+        except Exception:  # noqa: BLE001
+            logger.exception("Failed to notify user about close_chat %s", user_id)
+
+    @router.callback_query(F.data.startswith("close_chat:"))
+    async def cb_close_chat(callback: CallbackQuery) -> None:
+        if not callback.from_user or not callback.data:
+            return
+        try:
+            user_id = int(callback.data.split(":", 1)[1])
+        except ValueError:
+            await callback.answer("Некорректный ID.")
+            return
+        closed = await db.close_support_session(user_id)
+        if closed is None:
+            await callback.answer("Диалог уже закрыт.", show_alert=False)
+            try:
+                if callback.message:
+                    await callback.message.edit_reply_markup(reply_markup=None)
+            except Exception:  # noqa: BLE001
+                pass
+            return
+        await callback.answer("Диалог закрыт.")
+        try:
+            if callback.message:
+                await callback.message.edit_text(
+                    f"❌ Диалог с {user_id} закрыт менеджером.",
+                )
+        except Exception:  # noqa: BLE001
+            pass
+        try:
+            user_row = await db.get_user(user_id)
+            kb = private_keyboard(str(user_row["role"])) if user_row else public_menu_keyboard()
+            await callback.bot.send_message(
+                chat_id=user_id,
+                text="🧑‍💼 Менеджер завершил диалог. Если будет нужно — обращайтесь снова.",
+                reply_markup=kb,
+            )
+        except Exception:  # noqa: BLE001
+            logger.exception("Failed to notify user about close_chat callback %s", user_id)
+
+    async def _manager_has_active_session(message: Message) -> bool:
+        if not message.from_user:
+            return False
+        if message.from_user.id == bot.id:
+            return False
+        if message.reply_to_message is not None:
+            return False
+        text = (message.text or "").strip()
+        if text.startswith("/"):
+            return False
+        is_support = message.chat.id in settings.support_chat_ids
+        is_admin = message.from_user.id in settings.admin_ids
+        if not (is_support or is_admin):
+            return False
+        session = await db.get_active_session_by_manager(message.from_user.id)
+        return session is not None
+
+    @router.message(_manager_has_active_session)
+    async def relay_manager_message(message: Message) -> None:
+        if not message.from_user:
+            return
+        session = await db.get_active_session_by_manager(message.from_user.id)
+        if session is None:
+            return
+        user_id = int(session["telegram_id"])
+        try:
+            await message.bot.copy_message(
+                chat_id=user_id,
+                from_chat_id=message.chat.id,
+                message_id=message.message_id,
+            )
+            await _log_chat_message(
+                db=db,
+                user_telegram_id=user_id,
+                direction="manager",
+                message=message,
+                bot_key=profile.key,
+                manager_telegram_id=message.from_user.id,
+            )
+        except TelegramForbiddenError:
+            await message.reply("⚠️ Пользователь заблокировал бота.")
+        except Exception:  # noqa: BLE001
+            logger.exception("Failed to relay manager message to %s", user_id)
+            await message.reply("⚠️ Не удалось доставить сообщение.")
 
     @router.message(lambda message: message.reply_to_message is not None)
     async def bridge_manager_reply(message: Message) -> None:

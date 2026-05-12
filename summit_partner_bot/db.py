@@ -1477,6 +1477,34 @@ class Database:
                 telegram_id,
             )
 
+    async def get_active_session_by_manager(self, manager_telegram_id: int) -> asyncpg.Record | None:
+        async with self.pool.acquire() as conn:
+            return await conn.fetchrow(
+                """
+                SELECT *
+                FROM support_sessions
+                WHERE manager_telegram_id = $1 AND status = 'active'
+                ORDER BY opened_at DESC
+                LIMIT 1
+                """,
+                manager_telegram_id,
+            )
+
+    async def close_active_sessions_for_manager(self, manager_telegram_id: int) -> int:
+        async with self.pool.acquire() as conn:
+            result = await conn.execute(
+                """
+                UPDATE support_sessions
+                SET status = 'closed', closed_at = NOW()
+                WHERE manager_telegram_id = $1 AND status = 'active'
+                """,
+                manager_telegram_id,
+            )
+        try:
+            return int(result.split()[-1])
+        except (ValueError, IndexError):
+            return 0
+
     async def get_active_support_session(self, telegram_id: int) -> asyncpg.Record | None:
         async with self.pool.acquire() as conn:
             return await conn.fetchrow(
