@@ -153,7 +153,17 @@
       overflow-wrap: anywhere;
       line-height: 1.25;
     }
-    .bubble.user { align-self: flex-start; border-bottom-left-radius: 4px; }
+    .bubble.user {
+      align-self: flex-start;
+      border-bottom-left-radius: 4px;
+      padding: 1px 6px;
+      line-height: 1;
+      border-radius: 8px;
+    }
+    .bubble.user .author { font-size: 8px; margin: 0; line-height: 1; }
+    .bubble.user .body { font-size: 11px; line-height: 1.05; }
+    .bubble.user .time { font-size: 8px; margin-top: 0; line-height: 1; }
+    .bubble.user .media { font-size: 9px; padding: 0 4px; margin: 0; }
     .bubble.manager {
       align-self: flex-end;
       background: var(--mgr-bg);
