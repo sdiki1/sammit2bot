@@ -51,3 +51,7 @@ class BoothBookingFlow(StatesGroup):
     waiting_contact_name = State()
     waiting_phone = State()
     waiting_email = State()
+
+
+class ApplicationLinkFlow(StatesGroup):
+    waiting_start = State()

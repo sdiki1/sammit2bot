@@ -60,6 +60,7 @@ from summit_partner_bot.keyboards import (
     BTN_CLINIC_BOOST,
     BTN_CLOSE_CHAT,
     BTN_CONSENT_ACCEPT,
+    BTN_START_APPLICATION,
     BTN_FAQ,
     BTN_FEEDBACK,
     BTN_FOR_EXPERTS,
@@ -89,12 +90,14 @@ from summit_partner_bot.keyboards import (
     private_menu_keyboard,
     public_menu_keyboard,
     section_keyboard,
+    start_application_keyboard,
     support_chat_keyboard,
     url_keyboard,
 )
 from summit_partner_bot.middlewares import RateLimitMiddleware
 from summit_partner_bot.states import (
     AccessRequestFlow,
+    ApplicationLinkFlow,
     BoothBookingFlow,
     ConsentFlow,
     FeedbackFlow,
@@ -146,6 +149,7 @@ ALL_MAIN_BUTTONS = set(PUBLIC_MENU_BUTTONS) | {
     BTN_SHARE_CONTACT,
     BTN_CONSENT_ACCEPT,
     BTN_CLOSE_CHAT,
+    BTN_START_APPLICATION,
 }
 
 PROFILE_MENU_BUTTONS = {
@@ -371,7 +375,46 @@ def _parse_broadcast_target(payload: str) -> tuple[str, str, str]:
     return (ROLE_ALL, "", text)
 
 
-async def _send_link_or_file(message: Message, title: str, value: str) -> None:
+async def _send_link_or_file(message: Message, title: str, value: str, db: Database | None = None) -> None:
+    if value.startswith("db_file:") and db is not None:
+        raw_id = value.split(":", maxsplit=1)[1].strip()
+        try:
+            link_id = int(raw_id)
+        except ValueError:
+            link_id = 0
+        if link_id:
+            row = await db.get_content_link(link_id)
+            if row is not None:
+                cached = (row["cached_file_id"] or "").strip() if row["cached_file_id"] else ""
+                mime = (row["file_mime"] or "").lower() if row["file_mime"] else ""
+                filename = row["file_filename"] or "file"
+                if cached:
+                    if mime.startswith("image/"):
+                        await message.answer_photo(photo=cached, caption=title)
+                    elif mime.startswith("video/"):
+                        await message.answer_video(video=cached, caption=title)
+                    else:
+                        await message.answer_document(document=cached, caption=title)
+                    return
+                if row["file_bytes"]:
+                    data = bytes(row["file_bytes"])
+                    input_file = BufferedInputFile(data, filename=filename)
+                    if mime.startswith("image/"):
+                        sent = await message.answer_photo(photo=input_file, caption=title)
+                        if sent.photo:
+                            await db.set_content_link_file_cache(link_id, sent.photo[-1].file_id)
+                    elif mime.startswith("video/"):
+                        sent = await message.answer_video(video=input_file, caption=title)
+                        if sent.video:
+                            await db.set_content_link_file_cache(link_id, sent.video.file_id)
+                    else:
+                        sent = await message.answer_document(document=input_file, caption=title)
+                        if sent.document:
+                            await db.set_content_link_file_cache(link_id, sent.document.file_id)
+                    return
+        await message.answer(f"⚠️ Файл «{title}» недоступен.")
+        return
+
     if value.startswith("file_id:"):
         file_id = value.split(":", maxsplit=1)[1].strip()
         if file_id:
@@ -873,20 +916,6 @@ async def _handle_application_start(
 
     updated = await db.attach_application_telegram(int(row["id"]), message.from_user.id)
     application = dict(updated or row)
-    request_text = str(application.get("request_text") or "").strip()
-    booth_number = str(application.get("booth_number") or "").strip()
-
-    await message.answer(
-        "👋 Добро пожаловать в бот партнёров СТАММИТ26.\n"
-        "Мы нашли вашу заявку с сайта и привязали её к этому Telegram-чату."
-    )
-    if request_text or booth_number:
-        lines = ["Ваше сообщение с сайта:"]
-        if request_text:
-            lines.append(request_text)
-        if booth_number:
-            lines.append(f"Стенд: {booth_number}")
-        await message.answer("\n".join(lines))
 
     user_row = await db.get_user(message.from_user.id)
     if _is_access_granted(user_row):
@@ -899,14 +928,16 @@ async def _handle_application_start(
         )
         return True
 
-    await _continue_application_access_flow(
-        message=message,
-        state=state,
-        db=db,
-        settings=settings,
-        content_loader=content_loader,
-        application=application,
-        include_public_menu=include_public_menu,
+    await state.set_state(ApplicationLinkFlow.waiting_start)
+    await state.set_data({"_app_token": token})
+    await message.answer(
+        "Здравствуйте!\n"
+        "Добро пожаловать в партнёрский Telegram-бот СТАММИТ’26.\n\n"
+        "Здесь вы можете забронировать и приобрести место в экспо-зоне саммита, "
+        "оставить заявку на участие и получить всю ключевую информацию для партнёров: "
+        "доступные форматы, условия размещения, технические детали, сроки подготовки и новости проекта.\n\n"
+        "Чтобы начать оформление заявки, нажмите «Старт».",
+        reply_markup=start_application_keyboard(),
     )
     return True
 
@@ -1201,6 +1232,16 @@ async def create_dispatcher(
     dp.message.middleware(RateLimitMiddleware(settings.rate_limit_seconds))
     dp.callback_query.middleware(RateLimitMiddleware(settings.rate_limit_seconds))
 
+    def _chat_farewell_text(default_text: str) -> str:
+        if profile_role == ROLE_PARTNER:
+            return (
+                "Спасибо за диалог!\n\n"
+                "Дальше этот бот будет работать как информационный канал для партнёров СТАММИТ’26.\n\n"
+                "Здесь будут появляться важные обновления: сроки подготовки, технические требования, "
+                "новости саммита, информация по экспо-зоне, партнёрские материалы и организационные напоминания."
+            )
+        return default_text
+
     async def _user_in_active_support(message: Message) -> bool:
         if not message.from_user:
             return False
@@ -1252,6 +1293,36 @@ async def create_dispatcher(
                 "⚠️ Не удалось отправить сообщение менеджеру. Попробуйте позже.",
                 reply_markup=support_chat_keyboard(),
             )
+
+    @router.message(ApplicationLinkFlow.waiting_start)
+    async def handle_application_start_click(message: Message, state: FSMContext) -> None:
+        if not message.from_user:
+            return
+        if (message.text or "").strip() != BTN_START_APPLICATION:
+            await message.answer(
+                "Нажмите «🚀 Старт», чтобы начать оформление заявки.",
+                reply_markup=start_application_keyboard(),
+            )
+            return
+        data = await state.get_data()
+        token = str(data.get("_app_token", ""))
+        application_row = await db.get_application_by_token(token) if token else None
+        if application_row is None:
+            await state.clear()
+            await message.answer(
+                "⚠️ Ссылка устарела. Откройте её заново с сайта.",
+                reply_markup=public_menu_keyboard() if include_public_menu else None,
+            )
+            return
+        await _continue_application_access_flow(
+            message=message,
+            state=state,
+            db=db,
+            settings=settings,
+            content_loader=content_loader,
+            application=dict(application_row),
+            include_public_menu=include_public_menu,
+        )
 
     @router.message(ConsentFlow.waiting_agreement)
     async def handle_consent_agreement(message: Message, state: FSMContext) -> None:
@@ -1580,6 +1651,13 @@ async def create_dispatcher(
             return
 
         await state.update_data(phone=phone.strip())
+        if profile_role == ROLE_PARTNER:
+            await message.answer(
+                "Спасибо! Ваш контакт получен.\n\n"
+                "За вами предварительно зафиксировано выбранное место в экспо-зоне СТАММИТ’26.\n\n"
+                "В ближайшее время в этот чат подключится менеджер партнёрского отдела, "
+                "чтобы уточнить детали участия, подтвердить место, рассказать о комплектации и дальнейших шагах."
+            )
         await state.set_state(NoCodeRegistrationFlow.waiting_email)
         await message.answer("✉️ Укажите email для связи:", reply_markup=cancel_keyboard())
 
@@ -2107,7 +2185,7 @@ async def create_dispatcher(
             await message.answer("⚠️ Выберите пункт из списка или нажмите «⬅️ Назад».")
             return
 
-        await _send_link_or_file(message, text, target)
+        await _send_link_or_file(message, text, target, db)
         await message.answer("👉 Выберите следующую ссылку или вернитесь назад.", reply_markup=section_keyboard(list(links_map.keys())))
 
     @router.message(NavigationFlow.waiting_category_choice)
@@ -2196,7 +2274,7 @@ async def create_dispatcher(
             await message.answer("⚠️ Выберите пункт из списка или нажмите «⬅️ Назад».")
             return
 
-        await _send_link_or_file(message, text, target)
+        await _send_link_or_file(message, text, target, db)
         await message.answer("👉 Выберите следующий материал или вернитесь назад.", reply_markup=section_keyboard(list(links_map.keys())))
 
     @router.message(F.text == BTN_INFLUENCER_CONDITIONS)
@@ -2226,7 +2304,7 @@ async def create_dispatcher(
             await message.answer("⚠️ Раздел с условиями пока не опубликован.")
             return
 
-        await _send_link_or_file(message, item["title"], item["url"])
+        await _send_link_or_file(message, item["title"], item["url"], db)
 
     @router.message(F.text == BTN_INFLUENCER_APPLICATION)
     async def influencer_application(message: Message) -> None:
@@ -2260,7 +2338,7 @@ async def create_dispatcher(
             await message.answer("⚠️ Раздел с заявкой пока не опубликован.")
             return
 
-        await _send_link_or_file(message, item["title"], item["url"])
+        await _send_link_or_file(message, item["title"], item["url"], db)
 
     @router.message(F.text == BTN_BOOTH_BOOKING)
     async def start_booth_booking(message: Message, state: FSMContext) -> None:
@@ -2407,7 +2485,7 @@ async def create_dispatcher(
 
         user_row = await db.get_user(message.from_user.id)
         await message.answer(
-            "✅ Диалог завершён. Если понадобится — обращайтесь снова.",
+            _chat_farewell_text("✅ Диалог завершён. Если понадобится — обращайтесь снова."),
             reply_markup=private_keyboard(str(user_row["role"])) if user_row else public_menu_keyboard(),
         )
 
@@ -2419,7 +2497,16 @@ async def create_dispatcher(
 
         role = normalize_role(str(user_row["role"]))
 
-        if not settings.support_chat_ids and not settings.admin_ids:
+        content_settings = await db.get_content_settings_map()
+        operator_raw = (content_settings.get("chat_operator_id") or "").strip()
+        operator_id: int | None = None
+        if operator_raw:
+            try:
+                operator_id = int(operator_raw)
+            except ValueError:
+                operator_id = None
+
+        if operator_id is None and not settings.support_chat_ids and not settings.admin_ids:
             await message.answer(
                 "🧑‍💼 Поддержка временно недоступна. Попробуйте позже.",
                 reply_markup=private_keyboard(role),
@@ -2428,11 +2515,16 @@ async def create_dispatcher(
 
         await state.clear()
 
-        primary_chat_id = next(iter(settings.support_chat_ids)) if settings.support_chat_ids else next(iter(settings.admin_ids))
+        if operator_id is not None:
+            primary_chat_id = operator_id
+        elif settings.support_chat_ids:
+            primary_chat_id = next(iter(settings.support_chat_ids))
+        else:
+            primary_chat_id = next(iter(settings.admin_ids))
         await db.connect_support_session(
             telegram_id=message.from_user.id,
             support_chat_id=primary_chat_id,
-            manager_telegram_id=None,
+            manager_telegram_id=operator_id,
         )
 
         username = f"@{user_row['username']}" if user_row["username"] else "—"
@@ -2449,7 +2541,10 @@ async def create_dispatcher(
             f"Открыть в админ-панели: чат → /chats/{message.from_user.id}"
         )
 
-        targets = set(settings.admin_ids) | set(settings.support_chat_ids)
+        if operator_id is not None:
+            targets = {operator_id}
+        else:
+            targets = set(settings.admin_ids) | set(settings.support_chat_ids)
         for chat_id in targets:
             try:
                 await message.bot.send_message(chat_id=chat_id, text=notify_header)
@@ -2631,7 +2726,7 @@ async def create_dispatcher(
             user_kb = private_keyboard(str(user_row["role"])) if user_row else public_menu_keyboard()
             await message.bot.send_message(
                 chat_id=user_id,
-                text="🧑‍💼 Менеджер завершил диалог. Если будет нужно — обращайтесь снова.",
+                text=_chat_farewell_text("🧑‍💼 Менеджер завершил диалог. Если будет нужно — обращайтесь снова."),
                 reply_markup=user_kb,
             )
         except Exception:  # noqa: BLE001
@@ -3225,7 +3320,7 @@ async def create_dispatcher(
             kb = private_keyboard(str(user_row["role"])) if user_row else public_menu_keyboard()
             await message.bot.send_message(
                 chat_id=user_id,
-                text="🧑‍💼 Менеджер завершил диалог. Если будет нужно — обращайтесь снова.",
+                text=_chat_farewell_text("🧑‍💼 Менеджер завершил диалог. Если будет нужно — обращайтесь снова."),
                 reply_markup=kb,
             )
         except Exception:  # noqa: BLE001
@@ -3262,7 +3357,7 @@ async def create_dispatcher(
             kb = private_keyboard(str(user_row["role"])) if user_row else public_menu_keyboard()
             await callback.bot.send_message(
                 chat_id=user_id,
-                text="🧑‍💼 Менеджер завершил диалог. Если будет нужно — обращайтесь снова.",
+                text=_chat_farewell_text("🧑‍💼 Менеджер завершил диалог. Если будет нужно — обращайтесь снова."),
                 reply_markup=kb,
             )
         except Exception:  # noqa: BLE001
@@ -3277,10 +3372,6 @@ async def create_dispatcher(
             return False
         text = (message.text or "").strip()
         if text.startswith("/"):
-            return False
-        is_support = message.chat.id in settings.support_chat_ids
-        is_admin = message.from_user.id in settings.admin_ids
-        if not (is_support or is_admin):
             return False
         session = await db.get_active_session_by_manager(message.from_user.id)
         return session is not None

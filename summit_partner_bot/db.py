@@ -234,6 +234,10 @@ class Database:
                     url TEXT NOT NULL,
                     position INTEGER NOT NULL DEFAULT 100,
                     is_active BOOLEAN NOT NULL DEFAULT TRUE,
+                    file_bytes BYTEA,
+                    file_filename TEXT,
+                    file_mime TEXT,
+                    cached_file_id TEXT,
                     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
                 );
 
@@ -368,6 +372,10 @@ class Database:
             await conn.execute("CREATE INDEX IF NOT EXISTS idx_admin_users_created ON admin_users(created_at)")
             await conn.execute("ALTER TABLE content_links ADD COLUMN IF NOT EXISTS category TEXT")
             await conn.execute("ALTER TABLE content_links ADD COLUMN IF NOT EXISTS subcategory TEXT")
+            await conn.execute("ALTER TABLE content_links ADD COLUMN IF NOT EXISTS file_bytes BYTEA")
+            await conn.execute("ALTER TABLE content_links ADD COLUMN IF NOT EXISTS file_filename TEXT")
+            await conn.execute("ALTER TABLE content_links ADD COLUMN IF NOT EXISTS file_mime TEXT")
+            await conn.execute("ALTER TABLE content_links ADD COLUMN IF NOT EXISTS cached_file_id TEXT")
 
             await conn.execute("ALTER TABLE applications ADD COLUMN IF NOT EXISTS telegram_id BIGINT")
             await conn.execute("ALTER TABLE applications ADD COLUMN IF NOT EXISTS role TEXT")
@@ -1170,6 +1178,9 @@ class Database:
         is_active: bool = True,
         category: str | None = None,
         subcategory: str | None = None,
+        file_bytes: bytes | None = None,
+        file_filename: str | None = None,
+        file_mime: str | None = None,
     ) -> int:
         section_value = section.strip()
         if not section_value:
@@ -1177,8 +1188,11 @@ class Database:
         async with self.pool.acquire() as conn:
             row = await conn.fetchrow(
                 """
-                INSERT INTO content_links(section, category, subcategory, title, url, position, is_active)
-                VALUES($1, $2, $3, $4, $5, $6, $7)
+                INSERT INTO content_links(
+                    section, category, subcategory, title, url, position, is_active,
+                    file_bytes, file_filename, file_mime
+                )
+                VALUES($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
                 RETURNING id
                 """,
                 section_value,
@@ -1188,8 +1202,71 @@ class Database:
                 url.strip(),
                 position,
                 is_active,
+                file_bytes,
+                (file_filename or "").strip() or None,
+                (file_mime or "").strip() or None,
             )
-        return int(row["id"])
+            link_id = int(row["id"])
+            if file_bytes and not url.strip():
+                await conn.execute(
+                    "UPDATE content_links SET url = $1 WHERE id = $2",
+                    f"db_file:{link_id}",
+                    link_id,
+                )
+        return link_id
+
+    async def get_content_link(self, link_id: int) -> asyncpg.Record | None:
+        async with self.pool.acquire() as conn:
+            return await conn.fetchrow("SELECT * FROM content_links WHERE id = $1", link_id)
+
+    async def set_content_link_file_cache(self, link_id: int, file_id: str) -> None:
+        async with self.pool.acquire() as conn:
+            await conn.execute(
+                "UPDATE content_links SET cached_file_id = $1 WHERE id = $2",
+                file_id,
+                link_id,
+            )
+
+    async def replace_content_link_file(
+        self,
+        link_id: int,
+        file_bytes: bytes,
+        file_filename: str | None,
+        file_mime: str | None,
+    ) -> None:
+        async with self.pool.acquire() as conn:
+            await conn.execute(
+                """
+                UPDATE content_links
+                SET file_bytes = $1,
+                    file_filename = $2,
+                    file_mime = $3,
+                    cached_file_id = NULL,
+                    url = $4
+                WHERE id = $5
+                """,
+                file_bytes,
+                (file_filename or "").strip() or None,
+                (file_mime or "").strip() or None,
+                f"db_file:{link_id}",
+                link_id,
+            )
+
+    async def clear_content_link_file(self, link_id: int, new_url: str) -> None:
+        async with self.pool.acquire() as conn:
+            await conn.execute(
+                """
+                UPDATE content_links
+                SET file_bytes = NULL,
+                    file_filename = NULL,
+                    file_mime = NULL,
+                    cached_file_id = NULL,
+                    url = $1
+                WHERE id = $2
+                """,
+                new_url,
+                link_id,
+            )
 
     async def update_content_link(
         self,

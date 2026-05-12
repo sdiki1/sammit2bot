@@ -472,14 +472,20 @@ def create_app() -> FastAPI:
         user_row = await db.get_user(telegram_id)
         last_bot_key = await db.get_last_chat_bot_key(telegram_id)
         role = str(user_row["role"]) if user_row else None
-        token, _ = _bot_token_for_user(settings, role, last_bot_key)
+        token, chosen_key = _bot_token_for_user(settings, role, last_bot_key)
+        if chosen_key == "partner":
+            farewell = (
+                "Спасибо за диалог!\n\n"
+                "Дальше этот бот будет работать как информационный канал для партнёров СТАММИТ’26.\n\n"
+                "Здесь будут появляться важные обновления: сроки подготовки, технические требования, "
+                "новости саммита, информация по экспо-зоне, партнёрские материалы и организационные напоминания."
+            )
+        else:
+            farewell = "🧑‍💼 Менеджер завершил диалог. Если будет нужно — обращайтесь снова."
         if token:
             bot = Bot(token=token)
             try:
-                await bot.send_message(
-                    chat_id=telegram_id,
-                    text="🧑‍💼 Менеджер завершил диалог. Если будет нужно — обращайтесь снова.",
-                )
+                await bot.send_message(chat_id=telegram_id, text=farewell)
             except TelegramAPIError:
                 pass
             finally:
@@ -545,24 +551,38 @@ def create_app() -> FastAPI:
             else:
                 await bot.send_message(chat_id=telegram_id, text=text)
 
+            settings_map = await db.get_content_settings_map()
+            operator_raw = (settings_map.get("chat_operator_id") or "").strip()
+            operator_id: int | None = None
+            if operator_raw:
+                try:
+                    operator_id = int(operator_raw)
+                except ValueError:
+                    operator_id = None
+
             await db.log_support_message(
                 telegram_id=telegram_id,
                 direction="manager",
                 text=text or None,
                 media_type=sent_media_type,
                 file_id=sent_file_id,
-                manager_telegram_id=None,
+                manager_telegram_id=operator_id,
                 bot_key=chosen_key,
             )
             existing_session = await db.get_active_support_session(telegram_id)
             if existing_session is None:
-                support_chat_id = next(iter(settings.support_chat_ids)) if settings.support_chat_ids else (
-                    next(iter(settings.admin_ids)) if settings.admin_ids else 0
-                )
+                if operator_id is not None:
+                    support_chat_id = operator_id
+                elif settings.support_chat_ids:
+                    support_chat_id = next(iter(settings.support_chat_ids))
+                elif settings.admin_ids:
+                    support_chat_id = next(iter(settings.admin_ids))
+                else:
+                    support_chat_id = 0
                 await db.connect_support_session(
                     telegram_id=telegram_id,
                     support_chat_id=support_chat_id,
-                    manager_telegram_id=None,
+                    manager_telegram_id=operator_id,
                 )
             _set_flash(request, "✅ Сообщение отправлено пользователю.")
         except TelegramForbiddenError:
@@ -732,14 +752,25 @@ def create_app() -> FastAPI:
         request: Request,
         section: str = Form(...),
         title: str = Form(...),
-        url: str = Form(...),
+        url: str = Form(""),
         position: int = Form(100),
         is_active: str | None = Form(default=None),
+        attachment: UploadFile | None = File(default=None),
         tab: str = Form(TAB_PUBLIC),
     ) -> RedirectResponse:
         maybe_redirect = _require_auth(request)
         if maybe_redirect is not None:
             return maybe_redirect
+        file_bytes: bytes | None = None
+        file_filename: str | None = None
+        file_mime: str | None = None
+        if attachment is not None and (attachment.filename or "").strip():
+            file_bytes = await attachment.read()
+            file_filename = (attachment.filename or "file").strip()
+            file_mime = (attachment.content_type or "").strip() or None
+        if not (url or "").strip() and not file_bytes:
+            _set_flash(request, "Укажите ссылку или прикрепите файл.")
+            return _redirect(_dashboard_url(_sanitize_tab(tab)))
         try:
             await db.add_content_link(
                 section=section,
@@ -749,6 +780,9 @@ def create_app() -> FastAPI:
                 url=url,
                 position=position,
                 is_active=bool(is_active),
+                file_bytes=file_bytes,
+                file_filename=file_filename,
+                file_mime=file_mime,
             )
             _set_flash(request, "Ссылка добавлена.")
         except ValueError:
@@ -761,14 +795,17 @@ def create_app() -> FastAPI:
         link_id: int = Form(...),
         section: str = Form(...),
         title: str = Form(...),
-        url: str = Form(...),
+        url: str = Form(""),
         position: int = Form(100),
         is_active: str | None = Form(default=None),
+        attachment: UploadFile | None = File(default=None),
+        clear_file: str | None = Form(default=None),
         tab: str = Form(TAB_PUBLIC),
     ) -> RedirectResponse:
         maybe_redirect = _require_auth(request)
         if maybe_redirect is not None:
             return maybe_redirect
+
         await db.update_content_link(
             link_id=link_id,
             section=section,
@@ -779,7 +816,21 @@ def create_app() -> FastAPI:
             position=position,
             is_active=bool(is_active),
         )
-        _set_flash(request, "Ссылка обновлена.")
+
+        if attachment is not None and (attachment.filename or "").strip():
+            data = await attachment.read()
+            await db.replace_content_link_file(
+                link_id=link_id,
+                file_bytes=data,
+                file_filename=(attachment.filename or "file").strip(),
+                file_mime=(attachment.content_type or "").strip() or None,
+            )
+            _set_flash(request, "Ссылка обновлена, файл прикреплён.")
+        elif clear_file:
+            await db.clear_content_link_file(link_id=link_id, new_url=(url or "").strip())
+            _set_flash(request, "Файл удалён, оставлена ссылка.")
+        else:
+            _set_flash(request, "Ссылка обновлена.")
         return _redirect(_dashboard_url(_sanitize_tab(tab)))
 
     @app.post("/links/delete")
@@ -944,6 +995,37 @@ def create_app() -> FastAPI:
             _set_flash(request, f"Рассылка создана и будет отправлена в ближайший цикл планировщика. Получателей: {recipients_count}. ID: {', '.join(map(str, broadcast_ids))}.")
         else:
             _set_flash(request, f"Рассылка запланирована через {minutes} мин. Получателей: {recipients_count}. ID: {', '.join(map(str, broadcast_ids))}.")
+        return _redirect(_dashboard_url(_sanitize_tab(tab)))
+
+    @app.post("/chats/operator")
+    async def save_chat_operator(
+        request: Request,
+        chat_operator_id: str = Form(""),
+        chat_operator_name: str = Form(""),
+        tab: str = Form(TAB_CHATS),
+    ) -> RedirectResponse:
+        maybe_redirect = _require_auth(request)
+        if maybe_redirect is not None:
+            return maybe_redirect
+
+        raw_id = (chat_operator_id or "").strip()
+        if raw_id:
+            try:
+                int(raw_id)
+            except ValueError:
+                _set_flash(request, "Telegram ID оператора должен быть числом.")
+                return _redirect(_dashboard_url(_sanitize_tab(tab)))
+
+        await db.upsert_content_settings(
+            {
+                "chat_operator_id": raw_id,
+                "chat_operator_name": (chat_operator_name or "").strip(),
+            }
+        )
+        if raw_id:
+            _set_flash(request, f"Оператор переписки задан: {raw_id}.")
+        else:
+            _set_flash(request, "Оператор переписки сброшен.")
         return _redirect(_dashboard_url(_sanitize_tab(tab)))
 
     @app.post("/consents/upload")

@@ -471,7 +471,8 @@
 
       <section>
         <h2>Ссылки и материалы</h2>
-        <form method="post" action="/links/add" class="block row">
+        <p class="muted">Каждая кнопка ведёт либо на URL, либо на файл. Можно заполнить URL <b>или</b> прикрепить файл — что приоритетнее, выберется автоматически (файл, если он есть).</p>
+        <form method="post" action="/links/add" class="block row" enctype="multipart/form-data">
           <input type="hidden" name="tab" value="{{ active_tab }}">
           <select class="c3" name="section" required>
             {% for section in visible_sections %}
@@ -479,9 +480,10 @@
             {% endfor %}
           </select>
           <input class="c3" name="title" placeholder="Название" required>
-          <input class="c4" name="url" placeholder="URL или file_id:..." required>
+          <input class="c4" name="url" placeholder="URL (если не файл)">
           <input class="c1" type="number" name="position" value="100">
           <label class="c1"><input type="checkbox" name="is_active" checked> Вкл</label>
+          <input class="c10" type="file" name="attachment" accept="image/*,video/*,application/pdf,.doc,.docx,.xls,.xlsx,.zip,.pptx">
           <button class="c2" type="submit">Добавить</button>
         </form>
 
@@ -489,7 +491,8 @@
           <h3>{{ section }}</h3>
           {% if links_by_section.get(section) %}
             {% for link in links_by_section.get(section) %}
-              <form method="post" action="/links/update" class="block row">
+              {% set has_file = link.file_bytes is not none or link.cached_file_id %}
+              <form method="post" action="/links/update" class="block row" enctype="multipart/form-data">
                 <input type="hidden" name="tab" value="{{ active_tab }}">
                 <input type="hidden" name="link_id" value="{{ link.id }}">
                 <select class="c3" name="section" required>
@@ -498,9 +501,16 @@
                   {% endfor %}
                 </select>
                 <input class="c3" name="title" value="{{ link.title }}" required>
-                <input class="c4" name="url" value="{{ link.url }}" required>
+                <input class="c4" name="url" value="{% if has_file %}{% else %}{{ link.url }}{% endif %}" placeholder="URL (если не файл)">
                 <input class="c1" type="number" name="position" value="{{ link.position }}">
                 <label class="c1"><input type="checkbox" name="is_active" {% if link.is_active %}checked{% endif %}> Вкл</label>
+                {% if has_file %}
+                  <div class="c8 muted">📎 Прикреплён: <b>{{ link.file_filename or 'файл' }}</b>{% if link.file_mime %} ({{ link.file_mime }}){% endif %}{% if link.cached_file_id %} · кэшировано{% endif %}</div>
+                  <label class="c2"><input type="checkbox" name="clear_file" value="1"> Удалить файл</label>
+                {% else %}
+                  <div class="c10 muted">Файл не прикреплён — кнопка отправит URL.</div>
+                {% endif %}
+                <input class="c10" type="file" name="attachment" accept="image/*,video/*,application/pdf,.doc,.docx,.xls,.xlsx,.zip,.pptx">
                 <button class="c2" type="submit">Сохранить</button>
               </form>
               <form method="post" action="/links/delete" class="row">
@@ -517,6 +527,22 @@
     {% endif %}
 
     {% if active_tab == 'chats' %}
+      <section>
+        <h2>Оператор переписки</h2>
+        <p class="muted">Telegram ID человека, с которым по умолчанию ведутся все чаты с пользователями. Если задан — все уведомления о новых диалогах и сообщения из админ-панели приписываются ему, и только он может отвечать через бота.</p>
+        <form method="post" action="/chats/operator" class="row">
+          <input type="hidden" name="tab" value="{{ active_tab }}">
+          <input class="c4" name="chat_operator_id" value="{{ settings_map.get('chat_operator_id', '') }}" placeholder="Telegram ID оператора (пусто = сбросить)">
+          <input class="c5" name="chat_operator_name" value="{{ settings_map.get('chat_operator_name', '') }}" placeholder="Имя оператора (необязательно)">
+          <button class="c3" type="submit">Сохранить</button>
+        </form>
+        {% if settings_map.get('chat_operator_id') %}
+          <div class="muted">Текущий оператор: <b>{{ settings_map.get('chat_operator_name') or '—' }}</b> (ID {{ settings_map.get('chat_operator_id') }})</div>
+        {% else %}
+          <div class="muted">Оператор не назначен — диалоги уходят всем администраторам.</div>
+        {% endif %}
+      </section>
+
       <section>
         <h2>Переписка с пользователями</h2>
         <p class="muted">Список всех пользователей, которые писали в поддержку или которым отвечал менеджер. Сортировка — по последнему сообщению.</p>
