@@ -603,6 +603,7 @@ async def _complete_request(
     application_source: str | None = None,
     application_text: str | None = None,
     include_public_menu: bool = True,
+    auto_approve: bool = False,
 ) -> None:
     if not message.from_user:
         return
@@ -635,20 +636,23 @@ async def _complete_request(
         referred_by=referred_by,
     )
 
-    await _notify_access_request(
-        bot=message.bot,
-        settings=settings,
-        user_id=message.from_user.id,
-        role=role,
-        subcategory=subcategory,
-        full_name=full_name,
-        phone=phone,
-        email=email,
-        company=company,
-        inn=inn,
-        code=code,
-        consent_accepted=consent_accepted,
-    )
+    if auto_approve:
+        await db.approve_user(telegram_id=message.from_user.id, approved_by=0)
+    else:
+        await _notify_access_request(
+            bot=message.bot,
+            settings=settings,
+            user_id=message.from_user.id,
+            role=role,
+            subcategory=subcategory,
+            full_name=full_name,
+            phone=phone,
+            email=email,
+            company=company,
+            inn=inn,
+            code=code,
+            consent_accepted=consent_accepted,
+        )
 
     if application_source:
         token = f"req{message.from_user.id}{int(datetime.now(timezone.utc).timestamp())}"
@@ -666,6 +670,15 @@ async def _complete_request(
             telegram_id=message.from_user.id,
             status=APPLICATION_STATUS_IN_PROGRESS,
         )
+        notify_text = application_text or "Заявка на доступ из Telegram-бота"
+        if auto_approve:
+            uid = message.from_user.id
+            notify_text += (
+                f"\n\n✅ Партнёр зарегистрирован и получил доступ автоматически.\n"
+                f"Назначить подкатегорию/стенд: /set_subcategory {uid} ПОДКАТЕГОРИЯ\n"
+                f"Подключиться к диалогу: /connect_user {uid}\n"
+                f"Закрыть диалог: /disconnect_user {uid}"
+            )
         await _notify_application(
             bot=message.bot,
             settings=settings,
@@ -673,7 +686,7 @@ async def _complete_request(
             user_id=message.from_user.id,
             source=application_source,
             role=role,
-            request_text=application_text or "Заявка на доступ из Telegram-бота",
+            request_text=notify_text,
             booth_number=booth_number,
             full_name=full_name,
             phone=phone,
@@ -684,6 +697,11 @@ async def _complete_request(
 
     content = await content_loader.load()
     await state.clear()
+
+    if auto_approve:
+        await message.answer("✅ Регистрация завершена! Добро пожаловать в партнёрский бот.")
+        await _show_private_menu(message, db, settings, content_loader, include_public_menu=include_public_menu)
+        return
 
     await message.answer(
         "✅ Заявка отправлена организатору."
@@ -1151,6 +1169,8 @@ async def create_dispatcher(
             user_row = await db.get_user(message.from_user.id)
             if _is_access_granted(user_row):
                 await _show_private_menu(message, db, settings, content_loader, include_public_menu=include_public_menu)
+            elif profile_role == ROLE_PARTNER:
+                await _start_no_code_registration(message, state, ROLE_PARTNER)
             else:
                 await message.answer(
                     f"Введите код приглашения для роли «{role_title(profile_role)}».",
@@ -1276,6 +1296,9 @@ async def create_dispatcher(
             return
 
         if profile_role:
+            if profile_role == ROLE_PARTNER:
+                await _start_no_code_registration(message, state, ROLE_PARTNER)
+                return
             await state.set_state(AccessRequestFlow.waiting_access_code)
             await state.set_data({"entry_role": profile_role})
             await message.answer(
@@ -1562,6 +1585,7 @@ async def create_dispatcher(
             application_source="no_code",
             application_text=source_text,
             include_public_menu=include_public_menu,
+            auto_approve=(profile_role == ROLE_PARTNER),
         )
 
     @router.message(AccessRequestFlow.waiting_partner_inn)
@@ -1654,6 +1678,7 @@ async def create_dispatcher(
             application_source=None if data.get("skip_application_create") else "access_request",
             application_text="Заявка на доступ из Telegram-бота",
             include_public_menu=include_public_menu,
+            auto_approve=(role == ROLE_PARTNER and profile_role == ROLE_PARTNER),
         )
 
     @router.message(AccessRequestFlow.waiting_name)
@@ -2418,6 +2443,46 @@ async def create_dispatcher(
             await message.bot.send_message(chat_id=user_id, text="🧑‍💼 Менеджер покинул чат.")
         except Exception:  # noqa: BLE001
             logger.exception("Failed to notify user about manager disconnect %s", user_id)
+
+    @router.message(Command("set_subcategory"))
+    async def manager_set_subcategory(message: Message) -> None:
+        if not message.from_user:
+            return
+        if message.chat.id not in settings.support_chat_ids and not await _is_admin_message(message, settings, db):
+            return
+
+        payload = _extract_command_payload(message.text or "")
+        parts = payload.split(None, 1)
+        if len(parts) < 2:
+            await message.answer("Формат: /set_subcategory TELEGRAM_ID ПОДКАТЕГОРИЯ")
+            return
+        try:
+            user_id = int(parts[0])
+        except ValueError:
+            await message.answer("TELEGRAM_ID должен быть числом.")
+            return
+
+        subcategory = parts[1].strip()
+        row = await db.update_user_subcategory(telegram_id=user_id, subcategory=subcategory)
+        if row is None:
+            await message.answer(f"Пользователь {user_id} не найден.")
+            return
+
+        label = f"«{subcategory}»" if subcategory else "сброшена"
+        await message.answer(f"✅ Подкатегория пользователя {user_id} изменена: {label}.")
+        try:
+            if subcategory:
+                await message.bot.send_message(
+                    chat_id=user_id,
+                    text=f"✅ Менеджер назначил вам подкатегорию: {subcategory}.",
+                )
+            else:
+                await message.bot.send_message(
+                    chat_id=user_id,
+                    text="ℹ️ Ваша подкатегория была сброшена менеджером.",
+                )
+        except Exception:  # noqa: BLE001
+            logger.exception("Failed to notify user about subcategory change %s", user_id)
 
     @router.message(Command("pending_requests"))
     async def admin_pending_requests(message: Message) -> None:
