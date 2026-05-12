@@ -51,6 +51,7 @@ from summit_partner_bot.keyboards import (
     BTN_CANCEL,
     BTN_CHANNEL,
     BTN_CLINIC_BOOST,
+    BTN_CLOSE_CHAT,
     BTN_CONSENT_ACCEPT,
     BTN_FAQ,
     BTN_FEEDBACK,
@@ -81,6 +82,7 @@ from summit_partner_bot.keyboards import (
     private_menu_keyboard,
     public_menu_keyboard,
     section_keyboard,
+    support_chat_keyboard,
     url_keyboard,
 )
 from summit_partner_bot.middlewares import RateLimitMiddleware
@@ -136,6 +138,7 @@ ALL_MAIN_BUTTONS = set(PUBLIC_MENU_BUTTONS) | {
     BTN_REGISTER_NO_CODE,
     BTN_SHARE_CONTACT,
     BTN_CONSENT_ACCEPT,
+    BTN_CLOSE_CHAT,
 }
 
 PROFILE_MENU_BUTTONS = {
@@ -2316,6 +2319,39 @@ async def create_dispatcher(
             reply_markup=reply_kb,
         )
 
+    @router.message(F.text == BTN_CLOSE_CHAT)
+    async def user_close_chat(message: Message, state: FSMContext) -> None:
+        if not message.from_user:
+            return
+        active = await db.get_active_support_session(message.from_user.id)
+        if active is None:
+            user_row = await db.get_user(message.from_user.id)
+            await message.answer(
+                "Активный диалог с поддержкой не найден.",
+                reply_markup=private_keyboard(str(user_row["role"])) if user_row else public_menu_keyboard(),
+            )
+            return
+
+        await db.close_support_session(message.from_user.id)
+        await state.clear()
+
+        notice = (
+            f"ℹ️ Пользователь завершил диалог.\n"
+            f"#USER_{message.from_user.id}"
+        )
+        targets = set(settings.admin_ids) | set(settings.support_chat_ids)
+        for chat_id in targets:
+            try:
+                await message.bot.send_message(chat_id=chat_id, text=notice)
+            except Exception:  # noqa: BLE001
+                logger.exception("Failed to notify chat %s about closed session", chat_id)
+
+        user_row = await db.get_user(message.from_user.id)
+        await message.answer(
+            "✅ Диалог завершён. Если понадобится — обращайтесь снова.",
+            reply_markup=private_keyboard(str(user_row["role"])) if user_row else public_menu_keyboard(),
+        )
+
     @router.message(F.text == BTN_MANAGER)
     async def manager_contact(message: Message, state: FSMContext) -> None:
         user_row = await _ensure_private_user(message, db, content_loader, include_public_menu=include_public_menu)
@@ -2324,28 +2360,49 @@ async def create_dispatcher(
 
         role = normalize_role(str(user_row["role"]))
 
-        if settings.support_chat_ids:
-            await state.set_state(SupportFlow.waiting_for_question)
+        if not settings.support_chat_ids and not settings.admin_ids:
             await message.answer(
-                "🧑‍💼 Напишите ваш вопрос менеджеру.\n"
-                "Можно отправить текст, фото или документ.\n"
-                "Для отмены нажмите «Отмена».",
-                reply_markup=cancel_keyboard(),
+                "🧑‍💼 Поддержка временно недоступна. Попробуйте позже.",
+                reply_markup=private_keyboard(role),
             )
             return
 
-        content = await content_loader.load()
-        manager = _get_manager_contact(content, role)
-        if manager.get("url"):
-            await message.answer(
-                "🧑‍💼 Поддержка работает через прямой контакт:",
-                reply_markup=url_keyboard([manager]),
-            )
-        else:
-            await message.answer(
-                "🧑‍💼 Контакт менеджера временно недоступен.",
-                reply_markup=private_keyboard(role),
-            )
+        await state.clear()
+
+        primary_chat_id = next(iter(settings.support_chat_ids)) if settings.support_chat_ids else next(iter(settings.admin_ids))
+        await db.connect_support_session(
+            telegram_id=message.from_user.id,
+            support_chat_id=primary_chat_id,
+            manager_telegram_id=None,
+        )
+
+        username = f"@{user_row['username']}" if user_row["username"] else "—"
+        notify_header = (
+            "🆕 Пользователь начал диалог с поддержкой\n"
+            f"#USER_{message.from_user.id}\n"
+            f"Роль: {role_title(role)}\n"
+            f"Имя: {user_row['full_name'] or user_row['first_name'] or message.from_user.first_name or '—'}\n"
+            f"Username: {username}\n"
+            f"Телефон: {user_row['phone'] or '—'}\n"
+            f"Компания: {user_row['company'] or '—'}\n\n"
+            f"Подключиться к диалогу: /connect_user {message.from_user.id}\n"
+            f"Закрыть диалог: /disconnect_user {message.from_user.id}\n"
+            f"Открыть в админ-панели: чат → /chats/{message.from_user.id}"
+        )
+
+        targets = set(settings.admin_ids) | set(settings.support_chat_ids)
+        for chat_id in targets:
+            try:
+                await message.bot.send_message(chat_id=chat_id, text=notify_header)
+            except Exception:  # noqa: BLE001
+                logger.exception("Failed to notify support chat %s about new session", chat_id)
+
+        await message.answer(
+            "🧑‍💼 Вы открыли диалог с поддержкой.\n"
+            "Менеджер скоро подключится. Пока можете писать сообщения — они уйдут менеджеру.\n"
+            "Когда захотите завершить — нажмите «❌ Завершить чат».",
+            reply_markup=support_chat_keyboard(),
+        )
 
     @router.message(SupportFlow.waiting_for_question)
     async def process_support_question(message: Message, state: FSMContext) -> None:
@@ -2491,7 +2548,13 @@ async def create_dispatcher(
 
         await message.answer(f"✅ Диалог с пользователем {user_id} закрыт.")
         try:
-            await message.bot.send_message(chat_id=user_id, text="🧑‍💼 Менеджер покинул чат.")
+            user_row = await db.get_user(user_id)
+            user_kb = private_keyboard(str(user_row["role"])) if user_row else public_menu_keyboard()
+            await message.bot.send_message(
+                chat_id=user_id,
+                text="🧑‍💼 Менеджер завершил диалог. Если будет нужно — обращайтесь снова.",
+                reply_markup=user_kb,
+            )
         except Exception:  # noqa: BLE001
             logger.exception("Failed to notify user about manager disconnect %s", user_id)
 

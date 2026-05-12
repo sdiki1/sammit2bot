@@ -440,6 +440,7 @@ def create_app() -> FastAPI:
         last_bot_key = await db.get_last_chat_bot_key(telegram_id)
         role = str(user_row["role"]) if user_row else None
         _, chosen_bot_key = _bot_token_for_user(settings, role, last_bot_key)
+        active_session = await db.get_active_support_session(telegram_id)
         return templates.TemplateResponse(
             request=request,
             name="chat.html",
@@ -450,8 +451,42 @@ def create_app() -> FastAPI:
                 "user": user_row,
                 "settings": settings,
                 "active_bot_key": chosen_bot_key,
+                "active_session": active_session,
             },
         )
+
+    @app.post("/chats/{telegram_id}/close")
+    async def chat_close(request: Request, telegram_id: int) -> RedirectResponse:
+        maybe_redirect = _require_auth(request)
+        if maybe_redirect is not None:
+            return maybe_redirect
+
+        from aiogram import Bot
+        from aiogram.exceptions import TelegramAPIError
+
+        closed = await db.close_support_session(telegram_id)
+        if closed is None:
+            _set_flash(request, "Активного диалога нет.")
+            return _redirect(f"/chats/{telegram_id}")
+
+        user_row = await db.get_user(telegram_id)
+        last_bot_key = await db.get_last_chat_bot_key(telegram_id)
+        role = str(user_row["role"]) if user_row else None
+        token, _ = _bot_token_for_user(settings, role, last_bot_key)
+        if token:
+            bot = Bot(token=token)
+            try:
+                await bot.send_message(
+                    chat_id=telegram_id,
+                    text="🧑‍💼 Менеджер завершил диалог. Если будет нужно — обращайтесь снова.",
+                )
+            except TelegramAPIError:
+                pass
+            finally:
+                await bot.session.close()
+
+        _set_flash(request, "Диалог завершён.")
+        return _redirect(f"/chats/{telegram_id}")
 
     @app.post("/chats/{telegram_id}/send")
     async def chat_send(

@@ -59,6 +59,7 @@ BTN_TO_PUBLIC_MENU = "🏠 Общее меню"
 BTN_REGISTER_NO_CODE = "📝 Подать заявку без кода"
 BTN_SHARE_CONTACT = "📱 Поделиться контактом"
 BTN_CONSENT_ACCEPT = "✅ Согласен"
+BTN_CLOSE_CHAT = "❌ Завершить чат"
 
 
 def _chunk_buttons(items: list[str], width: int = 2) -> list[list[KeyboardButton]]:
@@ -119,6 +120,13 @@ def contact_request_keyboard() -> ReplyKeyboardMarkup:
         ],
         resize_keyboard=True,
         one_time_keyboard=True,
+    )
+
+
+def support_chat_keyboard() -> ReplyKeyboardMarkup:
+    return ReplyKeyboardMarkup(
+        keyboard=[[KeyboardButton(text=BTN_CLOSE_CHAT)]],
+        resize_keyboard=True,
     )
 
 

@@ -178,6 +178,31 @@
     .badge-scheduled{ background: #dbeafe; color: #1256c9; border: 1px solid #93c5fd; }
     .badge-sent     { background: #dcfce7; color: #0b7a50; border: 1px solid #86efac; }
     .badge-failed   { background: #fee2e2; color: #b42318; border: 1px solid #fca5a5; }
+
+    /* Таблица переписок */
+    .chats-table { table-layout: fixed; }
+    .chats-table .preview-cell { font-size: 13px; }
+    .chats-table .preview-text {
+      display: inline-block;
+      max-width: 100%;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      vertical-align: middle;
+      word-break: break-word;
+    }
+    .msg-from {
+      display: inline-block;
+      font-size: 11px;
+      font-weight: 700;
+      padding: 1px 6px;
+      border-radius: 6px;
+      margin-right: 6px;
+      vertical-align: middle;
+      text-transform: uppercase;
+      letter-spacing: 0.3px;
+    }
+    .msg-from-user    { background: #dcfce7; color: #0b7a50; border: 1px solid #86efac; }
+    .msg-from-manager { background: #dbeafe; color: #1256c9; border: 1px solid #93c5fd; }
   </style>
 </head>
 <body>
@@ -496,18 +521,18 @@
         <h2>Переписка с пользователями</h2>
         <p class="muted">Список всех пользователей, которые писали в поддержку или которым отвечал менеджер. Сортировка — по последнему сообщению.</p>
         {% if chat_users %}
-          <table>
+          <table class="chats-table">
             <thead>
               <tr>
-                <th>Telegram ID</th>
+                <th style="width:120px;">Telegram ID</th>
                 <th>Имя</th>
                 <th>Username</th>
                 <th>Роль</th>
                 <th>Подкатегория</th>
-                <th>Сообщений</th>
+                <th style="width:80px;">Кол-во</th>
                 <th>Последнее сообщение</th>
-                <th>Когда</th>
-                <th>Действие</th>
+                <th style="width:150px;">Когда</th>
+                <th style="width:110px;">Действие</th>
               </tr>
             </thead>
             <tbody>
@@ -519,15 +544,13 @@
                   <td>{{ role_label(cu.role) if cu.role else '—' }}</td>
                   <td>{{ cu.subcategory or '—' }}</td>
                   <td>{{ cu.messages_total }}</td>
-                  <td>
-                    {% if cu.last_direction == 'manager' %}
-                      <span class="muted">Менеджер:</span>
-                    {% else %}
-                      <span class="muted">Пользователь:</span>
-                    {% endif %}
-                    {{ (cu.last_text or '')[:80] }}{% if (cu.last_text or '')|length > 80 %}…{% endif %}
+                  <td class="preview-cell">
+                    <span class="msg-from {% if cu.last_direction == 'manager' %}msg-from-manager{% else %}msg-from-user{% endif %}">
+                      {% if cu.last_direction == 'manager' %}Менеджер{% else %}Юзер{% endif %}:
+                    </span>
+                    <span class="preview-text">{{ (cu.last_text or '')[:120] }}{% if (cu.last_text or '')|length > 120 %}…{% endif %}</span>
                   </td>
-                  <td>{{ cu.last_at }}</td>
+                  <td class="muted">{{ cu.last_at.strftime('%d.%m.%Y %H:%M') if cu.last_at else '—' }}</td>
                   <td>
                     <a class="btn-link" href="/chats/{{ cu.telegram_id }}">Открыть</a>
                   </td>
