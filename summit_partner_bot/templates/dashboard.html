@@ -491,6 +491,56 @@
       </section>
     {% endif %}
 
+    {% if active_tab == 'chats' %}
+      <section>
+        <h2>Переписка с пользователями</h2>
+        <p class="muted">Список всех пользователей, которые писали в поддержку или которым отвечал менеджер. Сортировка — по последнему сообщению.</p>
+        {% if chat_users %}
+          <table>
+            <thead>
+              <tr>
+                <th>Telegram ID</th>
+                <th>Имя</th>
+                <th>Username</th>
+                <th>Роль</th>
+                <th>Подкатегория</th>
+                <th>Сообщений</th>
+                <th>Последнее сообщение</th>
+                <th>Когда</th>
+                <th>Действие</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for cu in chat_users %}
+                <tr>
+                  <td>{{ cu.telegram_id }}</td>
+                  <td>{{ cu.full_name or cu.first_name or '—' }}</td>
+                  <td>{% if cu.username %}@{{ cu.username }}{% else %}—{% endif %}</td>
+                  <td>{{ role_label(cu.role) if cu.role else '—' }}</td>
+                  <td>{{ cu.subcategory or '—' }}</td>
+                  <td>{{ cu.messages_total }}</td>
+                  <td>
+                    {% if cu.last_direction == 'manager' %}
+                      <span class="muted">Менеджер:</span>
+                    {% else %}
+                      <span class="muted">Пользователь:</span>
+                    {% endif %}
+                    {{ (cu.last_text or '')[:80] }}{% if (cu.last_text or '')|length > 80 %}…{% endif %}
+                  </td>
+                  <td>{{ cu.last_at }}</td>
+                  <td>
+                    <a class="btn-link" href="/chats/{{ cu.telegram_id }}">Открыть</a>
+                  </td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        {% else %}
+          <div class="muted">Переписки пока нет.</div>
+        {% endif %}
+      </section>
+    {% endif %}
+
     {% if active_tab == 'system' %}
       <section>
         <h2>Администраторы Telegram</h2>

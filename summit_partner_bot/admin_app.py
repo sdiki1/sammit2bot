@@ -62,6 +62,7 @@ TAB_PUBLIC = "public"
 TAB_PARTNERS = "partners"
 TAB_EXPERTS = "experts"
 TAB_INFLUENCERS = "influencers"
+TAB_CHATS = "chats"
 TAB_SYSTEM = "system"
 
 TAB_BOT_KEY = {
@@ -71,12 +72,13 @@ TAB_BOT_KEY = {
     TAB_INFLUENCERS: "influencer",
 }
 
-TAB_ORDER = [TAB_PUBLIC, TAB_PARTNERS, TAB_EXPERTS, TAB_INFLUENCERS, TAB_SYSTEM]
+TAB_ORDER = [TAB_PUBLIC, TAB_PARTNERS, TAB_EXPERTS, TAB_INFLUENCERS, TAB_CHATS, TAB_SYSTEM]
 TAB_TITLES = {
     TAB_PUBLIC: "Публичное",
     TAB_PARTNERS: "Партнёры",
     TAB_EXPERTS: "Эксперты",
     TAB_INFLUENCERS: "Инфлюенсеры",
+    TAB_CHATS: "Переписка",
     TAB_SYSTEM: "Сервис",
 }
 
@@ -98,6 +100,7 @@ TAB_SECTIONS = {
     TAB_PARTNERS: [SECTION_PARTNER_USEFUL_LINKS, SECTION_PARTNER_MATERIALS],
     TAB_EXPERTS: [SECTION_EXPERT_USEFUL_LINKS, SECTION_EXPERT_MATERIALS],
     TAB_INFLUENCERS: [SECTION_INFLUENCER_USEFUL_LINKS, SECTION_INFLUENCER_MATERIALS],
+    TAB_CHATS: [],
     TAB_SYSTEM: [],
 }
 
@@ -338,6 +341,8 @@ def create_app() -> FastAPI:
         for doc in all_consent_docs:
             consent_docs_by_bot.setdefault(str(doc["bot_key"]), []).append(doc)
 
+        chat_users = await db.list_chat_users(limit=300) if active_tab == TAB_CHATS else []
+
         links_all = await db.list_all_content_links(include_inactive=True)
         links_by_section: dict[str, list[Any]] = {}
         for row in links_all:
@@ -399,6 +404,27 @@ def create_app() -> FastAPI:
                 "bot_link_base": _bot_link_base(settings),
                 "consent_docs_by_bot": consent_docs_by_bot,
                 "tab_bot_key": TAB_BOT_KEY,
+                "chat_users": chat_users,
+            },
+        )
+
+    @app.get("/chats/{telegram_id}")
+    async def chat_view(request: Request, telegram_id: int) -> Any:
+        maybe_redirect = _require_auth(request)
+        if maybe_redirect is not None:
+            return maybe_redirect
+
+        messages = await db.list_support_messages(telegram_id=telegram_id, limit=2000)
+        user_row = await db.get_user(telegram_id)
+        return templates.TemplateResponse(
+            request=request,
+            name="chat.html",
+            context={
+                "flash": _pop_flash(request),
+                "telegram_id": telegram_id,
+                "messages": messages,
+                "user": user_row,
+                "settings": settings,
             },
         )
 

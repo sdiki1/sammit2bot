@@ -275,6 +275,20 @@ class Database:
                     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
                 );
 
+                CREATE TABLE IF NOT EXISTS support_messages (
+                    id BIGSERIAL PRIMARY KEY,
+                    telegram_id BIGINT NOT NULL,
+                    bot_key TEXT,
+                    direction TEXT NOT NULL,
+                    manager_telegram_id BIGINT,
+                    text TEXT,
+                    media_type TEXT,
+                    file_id TEXT,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                );
+                CREATE INDEX IF NOT EXISTS support_messages_user_idx
+                    ON support_messages (telegram_id, created_at);
+
                 CREATE TABLE IF NOT EXISTS consent_documents (
                     id BIGSERIAL PRIMARY KEY,
                     bot_key TEXT NOT NULL,
@@ -1752,6 +1766,85 @@ class Database:
         }
 
     # ── Согласия ──────────────────────────────────────────────────
+
+    async def log_support_message(
+        self,
+        telegram_id: int,
+        direction: str,
+        text: str | None = None,
+        media_type: str | None = None,
+        file_id: str | None = None,
+        manager_telegram_id: int | None = None,
+        bot_key: str | None = None,
+    ) -> None:
+        async with self.pool.acquire() as conn:
+            await conn.execute(
+                """
+                INSERT INTO support_messages(
+                    telegram_id, bot_key, direction, manager_telegram_id,
+                    text, media_type, file_id
+                ) VALUES ($1, $2, $3, $4, $5, $6, $7)
+                """,
+                telegram_id,
+                bot_key,
+                direction,
+                manager_telegram_id,
+                (text or None),
+                media_type,
+                file_id,
+            )
+
+    async def list_support_messages(self, telegram_id: int, limit: int = 500) -> list[asyncpg.Record]:
+        async with self.pool.acquire() as conn:
+            return await conn.fetch(
+                """
+                SELECT * FROM support_messages
+                WHERE telegram_id = $1
+                ORDER BY created_at ASC, id ASC
+                LIMIT $2
+                """,
+                telegram_id,
+                limit,
+            )
+
+    async def list_chat_users(self, limit: int = 500) -> list[asyncpg.Record]:
+        async with self.pool.acquire() as conn:
+            return await conn.fetch(
+                """
+                SELECT
+                    sm.telegram_id,
+                    u.full_name,
+                    u.first_name,
+                    u.username,
+                    u.role,
+                    u.subcategory,
+                    u.phone,
+                    u.company,
+                    COUNT(sm.id) AS messages_total,
+                    MAX(sm.created_at) AS last_at,
+                    (
+                        SELECT COALESCE(NULLIF(text, ''), '[' || media_type || ']')
+                        FROM support_messages
+                        WHERE telegram_id = sm.telegram_id
+                        ORDER BY created_at DESC, id DESC
+                        LIMIT 1
+                    ) AS last_text,
+                    (
+                        SELECT direction
+                        FROM support_messages
+                        WHERE telegram_id = sm.telegram_id
+                        ORDER BY created_at DESC, id DESC
+                        LIMIT 1
+                    ) AS last_direction
+                FROM support_messages sm
+                LEFT JOIN users u ON u.telegram_id = sm.telegram_id
+                GROUP BY sm.telegram_id, u.full_name, u.first_name, u.username,
+                         u.role, u.subcategory, u.phone, u.company
+                ORDER BY last_at DESC
+                LIMIT $1
+                """,
+                limit,
+            )
 
     async def update_user_subcategory(self, telegram_id: int, subcategory: str) -> asyncpg.Record | None:
         async with self.pool.acquire() as conn:

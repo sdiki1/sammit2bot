@@ -1074,6 +1074,49 @@ async def _send_public_button_link(message: Message, content_loader: ContentLoad
     return True
 
 
+def _extract_message_payload(message: Message) -> tuple[str | None, str | None, str | None]:
+    """Возвращает (text, media_type, file_id) для логирования."""
+    text = message.text or message.caption or None
+    if message.photo:
+        return text, "photo", message.photo[-1].file_id
+    if message.document is not None:
+        return text, "document", message.document.file_id
+    if message.video is not None:
+        return text, "video", message.video.file_id
+    if message.voice is not None:
+        return text, "voice", message.voice.file_id
+    if message.audio is not None:
+        return text, "audio", message.audio.file_id
+    if message.sticker is not None:
+        return text, "sticker", message.sticker.file_id
+    if message.video_note is not None:
+        return text, "video_note", message.video_note.file_id
+    return text, None, None
+
+
+async def _log_chat_message(
+    db: Database,
+    user_telegram_id: int,
+    direction: str,
+    message: Message,
+    bot_key: str,
+    manager_telegram_id: int | None = None,
+) -> None:
+    text, media_type, file_id = _extract_message_payload(message)
+    try:
+        await db.log_support_message(
+            telegram_id=user_telegram_id,
+            direction=direction,
+            text=text,
+            media_type=media_type,
+            file_id=file_id,
+            manager_telegram_id=manager_telegram_id,
+            bot_key=bot_key,
+        )
+    except Exception:  # noqa: BLE001
+        logger.exception("Failed to log support message for user %s", user_telegram_id)
+
+
 def _extract_media_file_id(message: Message) -> tuple[str, str] | None:
     if message.document is not None:
         file_name = message.document.file_name or "Документ"
@@ -2337,6 +2380,14 @@ async def create_dispatcher(
             f"Закрыть диалог: /disconnect_user {message.from_user.id}"
         )
 
+        await _log_chat_message(
+            db=db,
+            user_telegram_id=message.from_user.id,
+            direction="user",
+            message=message,
+            bot_key=profile.key,
+        )
+
         delivered_to_support = 0
         for chat_id in settings.support_chat_ids:
             try:
@@ -3043,6 +3094,14 @@ async def create_dispatcher(
                 from_chat_id=message.chat.id,
                 message_id=message.message_id,
             )
+            await _log_chat_message(
+                db=db,
+                user_telegram_id=user_id,
+                direction="manager",
+                message=message,
+                bot_key=profile.key,
+                manager_telegram_id=message.from_user.id,
+            )
             await message.reply("✅ Ответ отправлен пользователю.")
         except TelegramForbiddenError:
             await message.reply("Пользователь заблокировал бота. Ответ не доставлен.")
@@ -3081,6 +3140,13 @@ async def create_dispatcher(
                     from_chat_id=message.chat.id,
                     message_id=message.message_id,
                     reply_to_message_id=meta_message.message_id,
+                )
+                await _log_chat_message(
+                    db=db,
+                    user_telegram_id=message.from_user.id,
+                    direction="user",
+                    message=message,
+                    bot_key=profile.key,
                 )
                 await message.answer("✅ Сообщение отправлено менеджеру.")
             except Exception:  # noqa: BLE001
