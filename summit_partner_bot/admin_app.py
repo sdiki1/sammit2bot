@@ -656,38 +656,6 @@ def create_app() -> FastAPI:
 
         return _redirect(f"/chats/{telegram_id}")
 
-    @app.post("/admins/add")
-    async def add_admin_user(
-        request: Request,
-        telegram_id: str = Form(...),
-        note: str = Form(""),
-        tab: str = Form(TAB_SYSTEM),
-    ) -> RedirectResponse:
-        maybe_redirect = _require_auth(request)
-        if maybe_redirect is not None:
-            return maybe_redirect
-        try:
-            admin_id = int(telegram_id.strip())
-        except ValueError:
-            _set_flash(request, "Telegram ID администратора должен быть числом.")
-            return _redirect(_dashboard_url(_sanitize_tab(tab)))
-        await db.add_admin_user(admin_id, note=note)
-        _set_flash(request, f"Администратор {admin_id} добавлен.")
-        return _redirect(_dashboard_url(_sanitize_tab(tab)))
-
-    @app.post("/admins/delete")
-    async def delete_admin_user(
-        request: Request,
-        telegram_id: int = Form(...),
-        tab: str = Form(TAB_SYSTEM),
-    ) -> RedirectResponse:
-        maybe_redirect = _require_auth(request)
-        if maybe_redirect is not None:
-            return maybe_redirect
-        deleted = await db.delete_admin_user(telegram_id)
-        _set_flash(request, "Администратор удалён." if deleted else "Администратор не найден.")
-        return _redirect(_dashboard_url(_sanitize_tab(tab)))
-
     @app.post("/subcategories/add")
     async def add_subcategory(
         request: Request,
@@ -1017,39 +985,58 @@ def create_app() -> FastAPI:
             _set_flash(request, f"Рассылка запланирована через {minutes} мин. Получателей: {recipients_count}. ID: {', '.join(map(str, broadcast_ids))}.")
         return _redirect(_dashboard_url(_sanitize_tab(tab)))
 
-    @app.post("/chats/support-ids")
-    async def save_support_chat_ids(request: Request) -> RedirectResponse:
+    def _parse_support_override(raw: str) -> list[str]:
+        result: list[str] = []
+        seen: set[str] = set()
+        for chunk in (raw or "").replace(";", ",").split(","):
+            chunk = chunk.strip()
+            if not chunk:
+                continue
+            try:
+                normalized = str(int(chunk))
+            except ValueError:
+                continue
+            if normalized in seen:
+                continue
+            seen.add(normalized)
+            result.append(normalized)
+        return result
+
+    @app.post("/chats/support-ids/add")
+    async def add_support_chat_id(request: Request, support_id: str = Form(...)) -> RedirectResponse:
         maybe_redirect = _require_auth(request)
         if maybe_redirect is not None:
             return maybe_redirect
-        form = await request.form()
-        # multi-select sends multiple values under the same name
-        raw_values = form.getlist("support_chat_ids") if hasattr(form, "getlist") else [str(form.get("support_chat_ids") or "")]
-        # Также поддерживаем ручной ввод через текстовое поле
-        manual = str(form.get("support_chat_ids_manual") or "").strip()
-        ids: set[str] = set()
-        for value in raw_values:
-            value = (value or "").strip()
-            if value:
-                try:
-                    ids.add(str(int(value)))
-                except ValueError:
-                    continue
-        if manual:
-            for chunk in manual.replace(";", ",").split(","):
-                chunk = chunk.strip()
-                if not chunk:
-                    continue
-                try:
-                    ids.add(str(int(chunk)))
-                except ValueError:
-                    continue
-        override = ",".join(sorted(ids, key=lambda v: int(v)))
-        await db.upsert_content_settings({"support_chat_ids_override": override})
-        if override:
-            _set_flash(request, f"Получатели уведомлений поддержки сохранены: {override}.")
+        raw_value = (support_id or "").strip()
+        try:
+            new_id = str(int(raw_value))
+        except ValueError:
+            _set_flash(request, "ID должен быть числом.")
+            return _redirect(_dashboard_url(TAB_CHATS))
+        smap = await db.get_content_settings_map()
+        ids = _parse_support_override(smap.get("support_chat_ids_override", "") or "")
+        if new_id in ids:
+            _set_flash(request, f"ID {new_id} уже в списке.")
         else:
-            _set_flash(request, "Список получателей сброшен — будут использоваться значения из .env.")
+            ids.append(new_id)
+            await db.upsert_content_settings({"support_chat_ids_override": ",".join(ids)})
+            _set_flash(request, f"Менеджер {new_id} добавлен.")
+        return _redirect(_dashboard_url(TAB_CHATS))
+
+    @app.post("/chats/support-ids/remove")
+    async def remove_support_chat_id(request: Request, support_id: str = Form(...)) -> RedirectResponse:
+        maybe_redirect = _require_auth(request)
+        if maybe_redirect is not None:
+            return maybe_redirect
+        target = (support_id or "").strip()
+        smap = await db.get_content_settings_map()
+        ids = _parse_support_override(smap.get("support_chat_ids_override", "") or "")
+        if target in ids:
+            ids.remove(target)
+            await db.upsert_content_settings({"support_chat_ids_override": ",".join(ids)})
+            _set_flash(request, f"Менеджер {target} удалён.")
+        else:
+            _set_flash(request, f"ID {target} не найден.")
         return _redirect(_dashboard_url(TAB_CHATS))
 
     @app.post("/chats/operator")

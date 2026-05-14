@@ -265,6 +265,44 @@
     .support-id-row input[type="checkbox"] { width: auto; }
     .support-id-row:hover { background: #f4f7fc; }
 
+    /* Chips для менеджеров поддержки */
+    .chips {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin: 8px 0;
+    }
+    .chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      background: #e8effb;
+      border: 1px solid #93c5fd;
+      border-radius: 999px;
+      padding: 4px 6px 4px 12px;
+      font-size: 13px;
+      color: var(--text);
+    }
+    .chip-label b { font-weight: 700; }
+    .chip-remove-form { margin: 0; display: inline; }
+    .chip-x {
+      background: #fff;
+      border: 1px solid #93c5fd;
+      color: #1256c9;
+      border-radius: 50%;
+      width: 22px;
+      height: 22px;
+      padding: 0;
+      font-size: 16px;
+      line-height: 1;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 700;
+    }
+    .chip-x:hover { background: #b42318; color: #fff; border-color: #b42318; }
+
     /* Карточки менеджеров */
     .managers-grid {
       display: grid;
@@ -613,7 +651,7 @@
 
       <section>
         <h2>Получатели уведомлений поддержки</h2>
-        <p class="muted">Кому уходят уведомления о новых диалогах с поддержкой (аналог переменной <code>SUPPORT_CHAT_IDS</code>). Если ничего не выбрано — используются значения из <code>.env</code>. Можно отметить администраторов галочками и/или добавить ID вручную через запятую (например, ID Telegram-группы поддержки).</p>
+        <p class="muted">Кому уходят уведомления о новых диалогах с поддержкой (аналог переменной <code>SUPPORT_CHAT_IDS</code>). Если список пуст — используются значения из <code>.env</code>. Поддерживаются Telegram ID пользователей и групп (например, <code>-1001234567890</code>).</p>
         {% set current_support_raw = settings_map.get('support_chat_ids_override', '') %}
         {% set current_support_ids = [] %}
         {% if current_support_raw %}
@@ -622,33 +660,27 @@
             {% if p %}{% set _ = current_support_ids.append(p) %}{% endif %}
           {% endfor %}
         {% endif %}
-        {% set ns_extra = namespace(extras=[]) %}
-        {% for sid in current_support_ids %}
-          {% set ns_match = namespace(found=false) %}
-          {% for c in admin_candidates %}{% if c.id == sid %}{% set ns_match.found = true %}{% endif %}{% endfor %}
-          {% if not ns_match.found %}{% set _ = ns_extra.extras.append(sid) %}{% endif %}
-        {% endfor %}
-        <form method="post" action="/chats/support-ids">
-          {% if admin_candidates %}
-            <div class="support-id-list">
-              {% for c in admin_candidates %}
-                <label class="support-id-row">
-                  <input type="checkbox" name="support_chat_ids" value="{{ c.id }}" {% if c.id in current_support_ids %}checked{% endif %}>
-                  <span><b>{{ c.id }}</b> · <span class="muted">{{ c.note }}</span></span>
-                </label>
-              {% endfor %}
-            </div>
-          {% endif %}
-          <div class="row" style="margin-top:8px;">
-            <input class="c9" name="support_chat_ids_manual" value="{{ ns_extra.extras | join(',') }}" placeholder="Доп. ID через запятую (например, -1001234567890 для группы)">
-            <button class="c3" type="submit">Сохранить</button>
+
+        {% if current_support_ids %}
+          <div class="chips">
+            {% for sid in current_support_ids %}
+              <div class="chip">
+                <span class="chip-label"><b>{{ sid }}</b></span>
+                <form method="post" action="/chats/support-ids/remove" class="chip-remove-form">
+                  <input type="hidden" name="support_id" value="{{ sid }}">
+                  <button type="submit" class="chip-x" title="Удалить" onclick="return confirm('Удалить менеджера {{ sid }}?');">×</button>
+                </form>
+              </div>
+            {% endfor %}
           </div>
-        </form>
-        {% if current_support_raw %}
-          <div class="muted">Сейчас в БД: <b>{{ current_support_raw }}</b></div>
         {% else %}
-          <div class="muted">Сейчас используются значения из .env: <b>{{ env_admin_ids | join(', ') if env_admin_ids else '—' }}</b></div>
+          <div class="muted" style="margin:6px 0;">Список пуст — используются значения из <code>.env</code>: <b>{{ env_admin_ids | join(', ') if env_admin_ids else '—' }}</b></div>
         {% endif %}
+
+        <form method="post" action="/chats/support-ids/add" class="row" style="margin-top:10px;">
+          <input class="c8" name="support_id" placeholder="Telegram ID менеджера или группы" required>
+          <button class="c4 ok" type="submit">+ Добавить менеджера</button>
+        </form>
       </section>
 
       <section>

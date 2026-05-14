@@ -1307,7 +1307,7 @@ async def create_dispatcher(
             )
         return default_text
 
-    async def _user_in_active_support(message: Message) -> bool:
+    async def _user_in_active_support(message: Message, state: FSMContext | None = None) -> bool:
         if not message.from_user:
             return False
         if message.chat.id in (await _effective_support_chat_ids(db, settings)):
@@ -1317,6 +1317,12 @@ async def create_dispatcher(
             return False
         if text.startswith("/"):
             return False
+        # Если пользователь сейчас в каком-либо FSM-флоу (анкета, согласие и т.п.),
+        # пусть его сообщение обрабатывает соответствующий хэндлер, а не relay.
+        if state is not None:
+            current = await state.get_state()
+            if current is not None:
+                return False
         active = await db.get_active_support_session(message.from_user.id)
         return active is not None
 
