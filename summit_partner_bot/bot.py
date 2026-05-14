@@ -88,7 +88,6 @@ from summit_partner_bot.keyboards import (
     BTN_NEWS,
     BTN_PROGRAM,
     BTN_PROGRAM_PUBLIC,
-    BTN_REGISTER_NO_CODE,
     BTN_REFERRAL,
     BTN_ROUTE,
     BTN_SHARE_CONTACT,
@@ -97,7 +96,6 @@ from summit_partner_bot.keyboards import (
     BTN_TO_PUBLIC_MENU,
     PUBLIC_MENU_BUTTONS,
     cancel_keyboard,
-    code_or_register_keyboard,
     consent_keyboard,
     contact_request_keyboard,
     expert_start_keyboard,
@@ -167,7 +165,6 @@ ALL_MAIN_BUTTONS = set(PUBLIC_MENU_BUTTONS) | {
     BTN_BACK,
     BTN_CANCEL,
     BTN_TO_PUBLIC_MENU,
-    BTN_REGISTER_NO_CODE,
     BTN_SHARE_CONTACT,
     BTN_CONSENT_ACCEPT,
     BTN_CLOSE_CHAT,
@@ -495,9 +492,6 @@ async def _send_link_or_file(message: Message, title: str, value: str, db: Datab
 async def _show_public_menu(message: Message, content_loader: ContentLoader) -> None:
     content = await content_loader.load()
     text = str(content.get("public_welcome_text", "Добро пожаловать!"))
-    hint = "\n\n🔐 Для приватных разделов нажмите нужную роль и отправьте код приглашения."
-    if "код" not in text.lower():
-        text += hint
     await message.answer(text, reply_markup=public_menu_keyboard())
 
 
@@ -516,7 +510,7 @@ async def _show_private_menu(
         if include_public_menu:
             await _show_public_menu(message, content_loader)
         else:
-            await message.answer("Для входа отправьте код приглашения или подайте заявку без кода.", reply_markup=code_or_register_keyboard())
+            await message.answer("Доступ ещё не активен. Нажмите /start, чтобы заполнить анкету.", reply_markup=public_menu_keyboard())
         return
 
     await db.update_user_profile(
@@ -1032,7 +1026,7 @@ async def _ensure_private_user(
     if not _is_access_granted(user_row):
         if status == STATUS_APPROVED:
             await message.answer(
-                "🚫 Доступ больше не активен: код приглашения удалён или деактивирован.",
+                "🚫 Доступ больше не активен. Нажмите /start, чтобы заполнить анкету заново.",
                 reply_markup=public_menu_keyboard() if include_public_menu else None,
             )
             return None
@@ -2076,13 +2070,14 @@ async def create_dispatcher(
 
         if _is_access_granted(user_row):
             if profile_role and normalize_role(str(user_row["role"])) != profile_role:
-                await state.set_state(AccessRequestFlow.waiting_access_code)
-                await state.set_data({"entry_role": profile_role})
-                await message.answer(
-                    f"Этот бот предназначен для роли «{role_title(profile_role)}».\n"
-                    "Введите код приглашения для этой роли.",
-                    reply_markup=code_or_register_keyboard(),
-                )
+                # Роль в БД не совпадает с ролью бота — перерегистрируем под текущий бот
+                if profile_role == ROLE_INFLUENCER:
+                    await _show_influencer_start(message, state)
+                    return
+                if profile_role == ROLE_EXPERT:
+                    await _show_expert_start(message, state)
+                    return
+                await _start_no_code_registration(message, state, profile_role)
                 return
             await state.clear()
             await _show_private_menu(
@@ -2092,36 +2087,6 @@ async def create_dispatcher(
                 content_loader,
                 include_public_menu=include_public_menu,
             )
-            return
-
-        if payload:
-            ok = await _process_access_code_input(
-                message=message,
-                state=state,
-                db=db,
-                raw_input=payload,
-                expected_role=profile_role,
-            )
-            if ok:
-                return
-            await state.set_state(AccessRequestFlow.waiting_access_code)
-            await state.set_data({})
-            return
-
-        if user_row is not None and str(user_row["access_status"]) == STATUS_PENDING:
-            await message.answer(
-                "⏳ Ваша заявка уже отправлена и ожидает подтверждения организатором.",
-                reply_markup=public_menu_keyboard() if include_public_menu else None,
-            )
-            return
-
-        if user_row is not None and str(user_row["access_status"]) == STATUS_REJECTED:
-            reason = str(user_row["rejection_reason"] or "").strip()
-            text_out = "🚫 Ранее заявка была отклонена."
-            if reason:
-                text_out += f"\nПричина: {reason}"
-            text_out += "\nДля нового доступа обратитесь к организатору."
-            await message.answer(text_out, reply_markup=public_menu_keyboard() if include_public_menu else None)
             return
 
         if profile_role:
@@ -2136,49 +2101,6 @@ async def create_dispatcher(
 
         await _show_public_menu(message, content_loader)
 
-    @router.message(Command("code"))
-    async def cmd_code(message: Message, state: FSMContext) -> None:
-        if not message.from_user:
-            return
-
-        if not profile_role:
-            await state.clear()
-            await message.answer(
-                "Код приглашения вводится в профильном боте. Выберите нужную роль в меню.",
-                reply_markup=public_menu_keyboard(),
-            )
-            return
-
-        user_row = await db.get_user(message.from_user.id)
-        if _is_access_granted(user_row):
-            await _show_private_menu(
-                message,
-                db,
-                settings,
-                content_loader,
-                include_public_menu=include_public_menu,
-            )
-            return
-
-        payload = _extract_command_payload(message.text or "")
-        if not payload:
-            await state.set_state(AccessRequestFlow.waiting_access_code)
-            await state.set_data({})
-            await message.answer(
-                "🔐 Отправьте код приглашения одним сообщением.\n"
-                "Можно отправить сам код или ссылку вида `...start=КОД`.",
-                reply_markup=cancel_keyboard(),
-            )
-            return
-
-        await _process_access_code_input(
-            message=message,
-            state=state,
-            db=db,
-            raw_input=payload,
-            expected_role=profile_role,
-        )
-
     @router.message(Command("menu"))
     async def cmd_menu(message: Message, state: FSMContext) -> None:
         if not message.from_user:
@@ -2189,12 +2111,6 @@ async def create_dispatcher(
             return
         user_row = await db.get_user(message.from_user.id)
         if _is_access_granted(user_row):
-            if profile_role and normalize_role(str(user_row["role"])) != profile_role:
-                await message.answer(
-                    f"Этот бот предназначен для роли «{role_title(profile_role)}».",
-                    reply_markup=code_or_register_keyboard(),
-                )
-                return
             await _show_private_menu(
                 message,
                 db,
@@ -2203,13 +2119,14 @@ async def create_dispatcher(
                 include_public_menu=include_public_menu,
             )
             return
+        if profile_role == ROLE_INFLUENCER:
+            await _show_influencer_start(message, state)
+            return
+        if profile_role == ROLE_EXPERT:
+            await _show_expert_start(message, state)
+            return
         if profile_role:
-            await state.set_state(AccessRequestFlow.waiting_access_code)
-            await state.set_data({"entry_role": profile_role})
-            await message.answer(
-                f"Введите код приглашения для роли «{role_title(profile_role)}».",
-                reply_markup=code_or_register_keyboard(),
-            )
+            await _start_no_code_registration(message, state, profile_role)
             return
         await _show_public_menu(message, content_loader)
 
@@ -2224,62 +2141,13 @@ async def create_dispatcher(
         if profile_role and _is_access_granted(user_row):
             await message.answer("❌ Действие отменено.", reply_markup=private_keyboard(str(user_row["role"])))
         elif profile_role:
-            await message.answer(
-                "❌ Действие отменено. Для входа отправьте код приглашения.",
-                reply_markup=code_or_register_keyboard(),
-            )
+            await message.answer("❌ Действие отменено.", reply_markup=public_menu_keyboard())
         else:
             await message.answer("❌ Действие отменено.", reply_markup=public_menu_keyboard())
 
     @router.message(F.text == BTN_CANCEL)
     async def cancel_any_flow_btn(message: Message, state: FSMContext) -> None:
         await cancel_any_flow(message, state)
-
-    @router.message(F.text == BTN_REGISTER_NO_CODE)
-    async def start_no_code_registration(message: Message, state: FSMContext) -> None:
-        if not profile_role:
-            await message.answer("Выберите нужную роль в главном меню.", reply_markup=public_menu_keyboard())
-            return
-        await _start_no_code_registration(message, state, profile_role)
-
-    @router.message(AccessRequestFlow.waiting_access_code)
-    async def request_access_code(message: Message, state: FSMContext) -> None:
-        if not profile_role:
-            await state.clear()
-            await message.answer(
-                "Код приглашения вводится в профильном боте. Выберите нужную роль в меню.",
-                reply_markup=public_menu_keyboard(),
-            )
-            return
-
-        raw_text = (message.text or "").strip()
-        if raw_text in PUBLIC_MENU_BUTTONS:
-            if include_public_menu:
-                await state.clear()
-                await _show_public_menu(message, content_loader)
-            else:
-                await message.answer(
-                    f"Введите код приглашения для роли «{role_title(profile_role or ROLE_PARTNER)}».",
-                    reply_markup=code_or_register_keyboard(),
-                )
-            return
-
-        data = await state.get_data()
-        expected_role: str | None = None
-        if data.get("entry_role"):
-            expected_role = normalize_role(str(data["entry_role"]))
-
-        if raw_text == BTN_REGISTER_NO_CODE:
-            await _start_no_code_registration(message, state, expected_role or profile_role or ROLE_PARTNER)
-            return
-
-        await _process_access_code_input(
-            message=message,
-            state=state,
-            db=db,
-            raw_input=raw_text,
-            expected_role=expected_role,
-        )
 
     @router.message(NoCodeRegistrationFlow.waiting_contact)
     async def no_code_contact(message: Message, state: FSMContext) -> None:
@@ -2557,12 +2425,13 @@ async def create_dispatcher(
                     reply_markup=private_keyboard(str(user_row["role"])),
                 )
                 return
-            await state.set_state(AccessRequestFlow.waiting_access_code)
-            await state.set_data({"entry_role": profile_role})
-            await message.answer(
-                f"Введите код приглашения для роли «{role_title(profile_role)}».",
-                reply_markup=code_or_register_keyboard(),
-            )
+            # Не одобрен — отправляем сразу на регистрацию
+            if profile_role == ROLE_INFLUENCER:
+                await _show_influencer_start(message, state)
+            elif profile_role == ROLE_EXPERT:
+                await _show_expert_start(message, state)
+            else:
+                await _start_no_code_registration(message, state, profile_role)
             return
 
         if text == BTN_FEEDBACK:
@@ -2617,12 +2486,11 @@ async def create_dispatcher(
                 )
                 return
 
-            await state.set_state(AccessRequestFlow.waiting_access_code)
-            await state.set_data({"entry_role": role})
+            if await _send_role_bot_transition(message, settings, role):
+                return
             await message.answer(
-                f"🔐 Введите код приглашения для роли «{role_title(role)}».\n"
-                "Можно отправить код одним сообщением без команды.",
-                reply_markup=cancel_keyboard(),
+                "Профильный бот для этой роли пока не настроен.",
+                reply_markup=public_menu_keyboard(),
             )
             return
 
@@ -2692,10 +2560,14 @@ async def create_dispatcher(
             if _is_access_granted(user_row):
                 await message.answer("🏠 Главное меню.", reply_markup=private_keyboard(str(user_row["role"])))
                 return
-            await message.answer(
-                f"Введите код приглашения для роли «{role_title(profile_role or ROLE_PARTNER)}».",
-                reply_markup=code_or_register_keyboard(),
-            )
+            if profile_role == ROLE_INFLUENCER:
+                await _show_influencer_start(message, state)
+            elif profile_role == ROLE_EXPERT:
+                await _show_expert_start(message, state)
+            elif profile_role:
+                await _start_no_code_registration(message, state, profile_role)
+            else:
+                await _show_public_menu(message, content_loader)
             return
         await _show_public_menu(message, content_loader)
 
@@ -2791,11 +2663,12 @@ async def create_dispatcher(
         user_row = await db.get_user(message.from_user.id)
         if _is_access_granted(user_row):
             await message.answer("🏠 Главное меню.", reply_markup=private_keyboard(str(user_row["role"])))
+        elif profile_role == ROLE_INFLUENCER:
+            await _show_influencer_start(message, state)
+        elif profile_role == ROLE_EXPERT:
+            await _show_expert_start(message, state)
         elif profile_role:
-            await message.answer(
-                f"Введите код приглашения для роли «{role_title(profile_role)}».",
-                reply_markup=code_or_register_keyboard(),
-            )
+            await _start_no_code_registration(message, state, profile_role)
         else:
             await message.answer("🏠 Главное меню.", reply_markup=public_menu_keyboard())
 
@@ -4129,31 +4002,18 @@ async def create_dispatcher(
             )
             return
 
-        current_state = await state.get_state()
-        if profile_role and current_state is None and raw_text and raw_text not in ALL_MAIN_BUTTONS:
-            if _looks_like_access_code_candidate(raw_text):
-                ok = await _process_access_code_input(
-                    message=message,
-                    state=state,
-                    db=db,
-                    raw_input=raw_text,
-                    expected_role=profile_role,
-                )
-                if ok:
-                    return
-
+        if profile_role == ROLE_INFLUENCER:
+            await _show_influencer_start(message, state)
+            return
+        if profile_role == ROLE_EXPERT:
+            await _show_expert_start(message, state)
+            return
         if profile_role:
-            await state.set_state(AccessRequestFlow.waiting_access_code)
-            await state.set_data({"entry_role": profile_role})
-            await message.answer(
-                f"Введите код приглашения для роли «{role_title(profile_role)}».",
-                reply_markup=code_or_register_keyboard(),
-            )
+            await _start_no_code_registration(message, state, profile_role)
             return
 
         await message.answer(
-            "ℹ️ Используйте кнопки меню для навигации.\n"
-            "Если у вас есть код приглашения, просто отправьте его одним сообщением.",
+            "ℹ️ Используйте кнопки меню для навигации.",
             reply_markup=public_menu_keyboard(),
         )
 
