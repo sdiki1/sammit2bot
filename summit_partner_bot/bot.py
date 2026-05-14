@@ -403,6 +403,16 @@ async def _send_link_or_file(message: Message, title: str, value: str, db: Datab
                         await message.answer_document(document=cached, caption=title)
                     return
                 if row["file_bytes"]:
+                    if mime.startswith("image/"):
+                        action = "upload_photo"
+                    elif mime.startswith("video/"):
+                        action = "upload_video"
+                    else:
+                        action = "upload_document"
+                    try:
+                        await message.bot.send_chat_action(chat_id=message.chat.id, action=action)
+                    except Exception:  # noqa: BLE001
+                        pass
                     data = bytes(row["file_bytes"])
                     input_file = BufferedInputFile(data, filename=filename)
                     if mime.startswith("image/"):
@@ -1099,7 +1109,12 @@ async def _start_nested_navigation(
     )
 
 
-async def _send_public_button_link(message: Message, content_loader: ContentLoader, button_title: str) -> bool:
+async def _send_public_button_link(
+    message: Message,
+    content_loader: ContentLoader,
+    button_title: str,
+    db: Database | None = None,
+) -> bool:
     content = await content_loader.load()
     item = _find_public_link(content, button_title)
     if item is None:
@@ -1108,10 +1123,7 @@ async def _send_public_button_link(message: Message, content_loader: ContentLoad
             reply_markup=public_menu_keyboard(),
         )
         return False
-    await message.answer(
-        f"🔗 {item['title']}",
-        reply_markup=url_keyboard([{"title": "Открыть", "url": item["url"]}]),
-    )
+    await _send_link_or_file(message, item["title"], item["url"], db)
     return True
 
 
@@ -2000,7 +2012,7 @@ async def create_dispatcher(
             return
 
         if text in PUBLIC_LINKABLE_BUTTONS:
-            await _send_public_button_link(message, content_loader, text)
+            await _send_public_button_link(message, content_loader, text, db)
             return
 
         await _show_public_menu(message, content_loader)
