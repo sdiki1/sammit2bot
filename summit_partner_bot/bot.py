@@ -861,6 +861,11 @@ async def _show_influencer_start(message: Message, state: FSMContext) -> None:
     await message.answer("Выберите действие:", reply_markup=influencer_start_keyboard())
 
 
+async def _show_expert_start(message: Message, state: FSMContext) -> None:
+    await state.set_state(ExpertStartFlow.waiting_choice)
+    await message.answer("Выберите действие:", reply_markup=expert_start_keyboard())
+
+
 async def _continue_application_access_flow(
     message: Message,
     state: FSMContext,
@@ -1665,6 +1670,264 @@ async def create_dispatcher(
         )
         await _show_private_menu(message, db, settings, content_loader, include_public_menu=include_public_menu)
 
+    @router.message(ExpertStartFlow.waiting_choice)
+    async def expert_start_choice(message: Message, state: FSMContext) -> None:
+        if not message.from_user:
+            return
+        text = (message.text or "").strip()
+        if text == BTN_EXPERT_ALREADY:
+            await db.upsert_access_request(
+                telegram_id=message.from_user.id,
+                username=message.from_user.username,
+                first_name=message.from_user.first_name,
+                role=ROLE_EXPERT,
+                subcategory=None,
+                access_code="NO_CODE_EXPERT",
+                full_name=message.from_user.full_name or message.from_user.first_name,
+                phone=None,
+                email=None,
+                company=None,
+                inn=None,
+                consent_accepted=False,
+                referred_by=None,
+            )
+            await db.approve_user(telegram_id=message.from_user.id, approved_by=0)
+            await state.clear()
+            await message.answer(
+                "Отлично!\n"
+                "Здесь вы сможете получить всю информацию по участию в СТАММИТ’26: "
+                "сроки, технические требования, материалы, дедлайны и связь с оргкомитетом.",
+            )
+            await _show_private_menu(message, db, settings, content_loader, include_public_menu=include_public_menu)
+            return
+        if text == BTN_EXPERT_APPLY:
+            await state.set_state(ExpertApplicationFlow.waiting_full_name)
+            await state.set_data({"exp": {}})
+            await message.answer(
+                "Отлично!\nОтветьте на несколько вопросов, чтобы оргкомитет мог рассмотреть вашу кандидатуру и предложенную тему.",
+            )
+            await message.answer("👤 Укажите ваше ФИО:", reply_markup=cancel_keyboard())
+            return
+        await message.answer("Пожалуйста, выберите вариант кнопкой.", reply_markup=expert_start_keyboard())
+
+    async def _exp_update(state: FSMContext, key: str, value: str) -> None:
+        data = await state.get_data()
+        exp = dict(data.get("exp") or {})
+        exp[key] = value
+        await state.update_data(exp=exp)
+
+    @router.message(ExpertApplicationFlow.waiting_full_name)
+    async def exp_full_name(message: Message, state: FSMContext) -> None:
+        name = (message.text or "").strip()
+        if len(name) < 2:
+            await message.answer("⚠️ Введите корректное ФИО.")
+            return
+        await _exp_update(state, "full_name", name)
+        await state.set_state(ExpertApplicationFlow.waiting_phone)
+        await message.answer("📞 Укажите номер телефона для связи:", reply_markup=contact_request_keyboard())
+
+    @router.message(ExpertApplicationFlow.waiting_phone)
+    async def exp_phone(message: Message, state: FSMContext) -> None:
+        phone = (message.contact.phone_number or "").strip() if message.contact else (message.text or "").strip()
+        if not PHONE_RE.match(phone):
+            await message.answer("⚠️ Неверный формат телефона. Пример: +79991234567.", reply_markup=contact_request_keyboard())
+            return
+        await _exp_update(state, "phone", phone)
+        await state.set_state(ExpertApplicationFlow.waiting_email)
+        await message.answer("✉️ Укажите email для связи:", reply_markup=cancel_keyboard())
+
+    @router.message(ExpertApplicationFlow.waiting_email)
+    async def exp_email(message: Message, state: FSMContext) -> None:
+        email = (message.text or "").strip()
+        if not EMAIL_RE.match(email):
+            await message.answer("⚠️ Укажите корректный email.")
+            return
+        await _exp_update(state, "email", email)
+        await state.set_state(ExpertApplicationFlow.waiting_company)
+        await message.answer(
+            "🏢 Укажите вашу компанию, клинику, проект или профессиональный статус:\nЕсли не применимо — отправьте «—».",
+            reply_markup=cancel_keyboard(),
+        )
+
+    @router.message(ExpertApplicationFlow.waiting_company)
+    async def exp_company(message: Message, state: FSMContext) -> None:
+        value = (message.text or "").strip()
+        if value == "—" or value == "-":
+            value = ""
+        await _exp_update(state, "company", value)
+        await state.set_state(ExpertApplicationFlow.waiting_format)
+        await message.answer(
+            "🎤 Выберите формат участия, который вам интересен:",
+            reply_markup=options_keyboard(EXPERT_FORMATS),
+        )
+
+    @router.message(ExpertApplicationFlow.waiting_format)
+    async def exp_format(message: Message, state: FSMContext) -> None:
+        value = (message.text or "").strip()
+        if not value:
+            return
+        await _exp_update(state, "format", value)
+        if value == BTN_EXPERT_OTHER:
+            await state.set_state(ExpertApplicationFlow.waiting_format_other)
+            await message.answer("✍️ Опишите, какой формат участия вам интересен:", reply_markup=cancel_keyboard())
+            return
+        await state.set_state(ExpertApplicationFlow.waiting_topic)
+        await message.answer("📌 Напишите тему вашего доклада или экспертного выступления:", reply_markup=cancel_keyboard())
+
+    @router.message(ExpertApplicationFlow.waiting_format_other)
+    async def exp_format_other(message: Message, state: FSMContext) -> None:
+        value = (message.text or "").strip()
+        if len(value) < 2:
+            await message.answer("⚠️ Опишите формат подробнее.")
+            return
+        await _exp_update(state, "format_other", value)
+        await state.set_state(ExpertApplicationFlow.waiting_topic)
+        await message.answer("📌 Напишите тему вашего доклада или экспертного выступления:", reply_markup=cancel_keyboard())
+
+    @router.message(ExpertApplicationFlow.waiting_topic)
+    async def exp_topic(message: Message, state: FSMContext) -> None:
+        value = (message.text or "").strip()
+        if len(value) < 2:
+            await message.answer("⚠️ Сформулируйте тему доклада.")
+            return
+        await _exp_update(state, "topic", value)
+        await state.set_state(ExpertApplicationFlow.waiting_description)
+        await message.answer(
+            "📝 Коротко опишите, о чём будет ваше выступление и какую пользу получат участники:",
+            reply_markup=cancel_keyboard(),
+        )
+
+    @router.message(ExpertApplicationFlow.waiting_description)
+    async def exp_description(message: Message, state: FSMContext) -> None:
+        value = (message.text or "").strip()
+        if len(value) < 5:
+            await message.answer("⚠️ Опишите подробнее.")
+            return
+        await _exp_update(state, "description", value)
+        await state.set_state(ExpertApplicationFlow.waiting_audience)
+        await message.answer(
+            "👥 Для какой аудитории будет полезна тема?",
+            reply_markup=options_keyboard(EXPERT_AUDIENCES),
+        )
+
+    @router.message(ExpertApplicationFlow.waiting_audience)
+    async def exp_audience(message: Message, state: FSMContext) -> None:
+        value = (message.text or "").strip()
+        if not value:
+            return
+        await _exp_update(state, "audience", value)
+        await state.set_state(ExpertApplicationFlow.waiting_experience)
+        await message.answer(
+            "🎙 Есть ли у вас опыт публичных выступлений?",
+            reply_markup=options_keyboard(EXPERT_EXPERIENCES),
+        )
+
+    @router.message(ExpertApplicationFlow.waiting_experience)
+    async def exp_experience(message: Message, state: FSMContext) -> None:
+        value = (message.text or "").strip()
+        if not value:
+            return
+        await _exp_update(state, "experience", value)
+        await state.set_state(ExpertApplicationFlow.waiting_links)
+        await message.answer(
+            "🔗 Пришлите ссылки на ваши соцсети, сайт, публикации или предыдущие выступления:\nЕсли ссылок нет — отправьте «—».",
+            reply_markup=cancel_keyboard(),
+        )
+
+    @router.message(ExpertApplicationFlow.waiting_links)
+    async def exp_links(message: Message, state: FSMContext) -> None:
+        value = (message.text or "").strip()
+        if value == "—" or value == "-":
+            value = ""
+        await _exp_update(state, "links", value)
+        await state.set_state(ExpertApplicationFlow.waiting_consent)
+        await message.answer(
+            "Для отправки заявки нужно согласие на обработку персональных данных.",
+            reply_markup=consent_keyboard(),
+        )
+
+    @router.message(ExpertApplicationFlow.waiting_consent)
+    async def exp_consent(message: Message, state: FSMContext) -> None:
+        if not message.from_user:
+            return
+        if (message.text or "").strip() != BTN_CONSENT_ACCEPT:
+            await message.answer("Нажмите «✅ Согласен», чтобы отправить заявку.", reply_markup=consent_keyboard())
+            return
+        data = await state.get_data()
+        exp = dict(data.get("exp") or {})
+        labels = [
+            ("ФИО", "full_name"),
+            ("Телефон", "phone"),
+            ("Email", "email"),
+            ("Компания/проект", "company"),
+            ("Формат участия", "format"),
+            ("Другой формат", "format_other"),
+            ("Тема доклада", "topic"),
+            ("Описание", "description"),
+            ("Аудитория", "audience"),
+            ("Опыт выступлений", "experience"),
+            ("Ссылки", "links"),
+        ]
+        summary = "Заявка спикера\n" + "\n".join(
+            f"{label}: {exp.get(key) or '—'}" for label, key in labels
+        )
+
+        await db.upsert_access_request(
+            telegram_id=message.from_user.id,
+            username=message.from_user.username,
+            first_name=message.from_user.first_name,
+            role=ROLE_EXPERT,
+            subcategory=None,
+            access_code="NO_CODE_EXPERT",
+            full_name=exp.get("full_name"),
+            phone=exp.get("phone"),
+            email=exp.get("email"),
+            company=exp.get("company"),
+            inn=None,
+            consent_accepted=True,
+            referred_by=None,
+        )
+        await db.approve_user(telegram_id=message.from_user.id, approved_by=0)
+
+        token = f"exp{message.from_user.id}{int(datetime.now(timezone.utc).timestamp())}"
+        application = await db.create_application(
+            token=token,
+            role=ROLE_EXPERT,
+            source="no_code",
+            request_text=summary,
+            booth_number=None,
+            full_name=exp.get("full_name"),
+            phone=exp.get("phone"),
+            email=exp.get("email"),
+            company=exp.get("company"),
+            inn=None,
+            telegram_id=message.from_user.id,
+            status=APPLICATION_STATUS_IN_PROGRESS,
+        )
+        await _notify_application(
+            bot=message.bot,
+            settings=settings,
+            application_id=int(application["id"]),
+            user_id=message.from_user.id,
+            source="no_code",
+            role=ROLE_EXPERT,
+            request_text=summary,
+            booth_number=None,
+            full_name=exp.get("full_name"),
+            phone=exp.get("phone"),
+            email=exp.get("email"),
+            company=exp.get("company"),
+            inn=None,
+        )
+
+        await state.clear()
+        await message.answer(
+            "Спасибо!\n"
+            "Ваша заявка на участие в качестве спикера принята.\n\n"
+            "Оргкомитет СТАММИТ’26 рассмотрит вашу тему и свяжется с вами по указанным контактам.",
+        )
+        await _show_private_menu(message, db, settings, content_loader, include_public_menu=include_public_menu)
+
     @router.message(ApplicationLinkFlow.waiting_start)
     async def handle_application_start_click(message: Message, state: FSMContext) -> None:
         if not message.from_user:
@@ -1718,6 +1981,8 @@ async def create_dispatcher(
                 await _show_private_menu(message, db, settings, content_loader, include_public_menu=include_public_menu)
             elif profile_role == ROLE_INFLUENCER:
                 await _show_influencer_start(message, state)
+            elif profile_role == ROLE_EXPERT:
+                await _show_expert_start(message, state)
             else:
                 await _start_no_code_registration(message, state, profile_role)
 
@@ -1862,6 +2127,9 @@ async def create_dispatcher(
         if profile_role:
             if profile_role == ROLE_INFLUENCER:
                 await _show_influencer_start(message, state)
+                return
+            if profile_role == ROLE_EXPERT:
+                await _show_expert_start(message, state)
                 return
             await _start_no_code_registration(message, state, profile_role)
             return
