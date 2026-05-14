@@ -1185,6 +1185,8 @@ class Database:
         section_value = section.strip()
         if not section_value:
             raise ValueError("Invalid section")
+        # Если есть файл — он имеет приоритет над URL
+        url_value = url.strip()
         async with self.pool.acquire() as conn:
             row = await conn.fetchrow(
                 """
@@ -1199,7 +1201,7 @@ class Database:
                 (category or "").strip() or None,
                 (subcategory or "").strip() or None,
                 title.strip(),
-                url.strip(),
+                "" if file_bytes else url_value,
                 position,
                 is_active,
                 file_bytes,
@@ -1207,7 +1209,7 @@ class Database:
                 (file_mime or "").strip() or None,
             )
             link_id = int(row["id"])
-            if file_bytes and not url.strip():
+            if file_bytes:
                 await conn.execute(
                     "UPDATE content_links SET url = $1 WHERE id = $2",
                     f"db_file:{link_id}",

@@ -203,6 +203,46 @@
     }
     .msg-from-user    { background: #dcfce7; color: #0b7a50; border: 1px solid #86efac; }
     .msg-from-manager { background: #dbeafe; color: #1256c9; border: 1px solid #93c5fd; }
+
+    /* Тексты сообщений */
+    .msg-texts-form { display: grid; gap: 12px; }
+    .msg-text-block {
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: 10px 12px;
+      background: #fafcff;
+      display: grid;
+      gap: 8px;
+    }
+    .msg-text-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 10px; flex-wrap: wrap; }
+    .msg-text-label { font-weight: 700; font-size: 14px; }
+    .msg-text-key { font-size: 11px; margin-top: 2px; }
+    .msg-text-key code { background: #eef2f8; padding: 1px 6px; border-radius: 4px; font-size: 11px; }
+    .msg-reset-btn {
+      background: #fff;
+      color: var(--muted);
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      padding: 4px 10px;
+      font-size: 12px;
+      cursor: pointer;
+      font-weight: 600;
+    }
+    .msg-reset-btn:hover { background: #f0f4fa; color: var(--text); }
+    .msg-default summary { cursor: pointer; font-size: 11px; padding: 4px 0; }
+    .msg-default pre {
+      margin: 4px 0 0;
+      padding: 8px 10px;
+      background: #f4f7fc;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      font-family: inherit;
+      font-size: 12px;
+      white-space: pre-wrap;
+      color: var(--muted);
+    }
+    .msg-save-row { display: flex; justify-content: flex-end; padding: 8px 0; position: sticky; bottom: 8px; background: rgba(255,255,255,0.95); border-radius: 8px; }
+    .msg-save-row button { padding: 10px 22px; font-size: 14px; }
   </style>
 </head>
 <body>
@@ -530,12 +570,28 @@
       <section>
         <h2>Оператор переписки</h2>
         <p class="muted">Telegram ID человека, с которым по умолчанию ведутся все чаты с пользователями. Если задан — все уведомления о новых диалогах и сообщения из админ-панели приписываются ему, и только он может отвечать через бота.</p>
+        {% set current_operator = settings_map.get('chat_operator_id', '') %}
+        {% set admin_candidates = [] %}
+        {% for aid in env_admin_ids %}
+          {% set _ = admin_candidates.append({'id': aid|string, 'note': 'из .env'}) %}
+        {% endfor %}
+        {% for au in admin_users %}
+          {% set _ = admin_candidates.append({'id': au.telegram_id|string, 'note': au.note or 'админ'}) %}
+        {% endfor %}
         <form method="post" action="/chats/operator" class="row">
           <input type="hidden" name="tab" value="{{ active_tab }}">
-          <input class="c4" name="chat_operator_id" value="{{ settings_map.get('chat_operator_id', '') }}" placeholder="Telegram ID оператора (пусто = сбросить)">
-          <input class="c5" name="chat_operator_name" value="{{ settings_map.get('chat_operator_name', '') }}" placeholder="Имя оператора (необязательно)">
+          <select class="c5" name="chat_operator_id">
+            <option value="">— не назначен —</option>
+            {% for c in admin_candidates %}
+              <option value="{{ c.id }}" {% if c.id == current_operator %}selected{% endif %}>{{ c.id }} · {{ c.note }}</option>
+            {% endfor %}
+          </select>
+          <input class="c4" name="chat_operator_name" value="{{ settings_map.get('chat_operator_name', '') }}" placeholder="Имя оператора (необязательно)">
           <button class="c3" type="submit">Сохранить</button>
         </form>
+        {% if not admin_candidates %}
+          <div class="muted">Сначала добавьте администратора в разделе «Сервис» или укажите ID в переменной .env.</div>
+        {% endif %}
         {% if settings_map.get('chat_operator_id') %}
           <div class="muted">Текущий оператор: <b>{{ settings_map.get('chat_operator_name') or '—' }}</b> (ID {{ settings_map.get('chat_operator_id') }})</div>
         {% else %}
@@ -587,6 +643,34 @@
         {% else %}
           <div class="muted">Переписки пока нет.</div>
         {% endif %}
+      </section>
+    {% endif %}
+
+    {% if active_tab == 'texts' %}
+      <section>
+        <h2>Тексты сообщений бота</h2>
+        <p class="muted">Тексты, которые бот отправляет пользователям. Пустое поле = вернётся значение по умолчанию. В некоторых текстах поддерживаются переменные в фигурных скобках, например <code>{subcategory}</code>.</p>
+        <form method="post" action="/texts/save" class="msg-texts-form">
+          {% for key, label, default in message_registry %}
+            <div class="msg-text-block">
+              <div class="msg-text-head">
+                <div>
+                  <div class="msg-text-label">{{ label }}</div>
+                  <div class="msg-text-key muted">ключ: <code>{{ key }}</code></div>
+                </div>
+                <button type="submit" formaction="/texts/reset" formnovalidate name="key" value="{{ key }}" class="msg-reset-btn" title="Сбросить к значению по умолчанию">↺ Сброс</button>
+              </div>
+              <textarea name="{{ key }}" rows="3" placeholder="{{ default }}">{{ settings_map.get(key, '') }}</textarea>
+              <details class="msg-default">
+                <summary class="muted">Значение по умолчанию</summary>
+                <pre>{{ default }}</pre>
+              </details>
+            </div>
+          {% endfor %}
+          <div class="msg-save-row">
+            <button type="submit">💾 Сохранить все тексты</button>
+          </div>
+        </form>
       </section>
     {% endif %}
 

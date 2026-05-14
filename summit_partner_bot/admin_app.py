@@ -25,6 +25,7 @@ from starlette.status import HTTP_303_SEE_OTHER
 
 from summit_partner_bot.config import load_settings
 from summit_partner_bot.content import ContentLoader
+from summit_partner_bot.messages import MESSAGE_REGISTRY
 from summit_partner_bot.db import (
     APPLICATION_STATUS_DONE,
     APPLICATION_STATUS_IN_PROGRESS,
@@ -63,6 +64,7 @@ TAB_PARTNERS = "partners"
 TAB_EXPERTS = "experts"
 TAB_INFLUENCERS = "influencers"
 TAB_CHATS = "chats"
+TAB_TEXTS = "texts"
 TAB_SYSTEM = "system"
 
 TAB_BOT_KEY = {
@@ -72,13 +74,14 @@ TAB_BOT_KEY = {
     TAB_INFLUENCERS: "influencer",
 }
 
-TAB_ORDER = [TAB_PUBLIC, TAB_PARTNERS, TAB_EXPERTS, TAB_INFLUENCERS, TAB_CHATS, TAB_SYSTEM]
+TAB_ORDER = [TAB_PUBLIC, TAB_PARTNERS, TAB_EXPERTS, TAB_INFLUENCERS, TAB_CHATS, TAB_TEXTS, TAB_SYSTEM]
 TAB_TITLES = {
     TAB_PUBLIC: "Публичное",
     TAB_PARTNERS: "Партнёры",
     TAB_EXPERTS: "Эксперты",
     TAB_INFLUENCERS: "Инфлюенсеры",
     TAB_CHATS: "Переписка",
+    TAB_TEXTS: "Тексты",
     TAB_SYSTEM: "Сервис",
 }
 
@@ -101,6 +104,7 @@ TAB_SECTIONS = {
     TAB_EXPERTS: [SECTION_EXPERT_USEFUL_LINKS, SECTION_EXPERT_MATERIALS],
     TAB_INFLUENCERS: [SECTION_INFLUENCER_USEFUL_LINKS, SECTION_INFLUENCER_MATERIALS],
     TAB_CHATS: [],
+    TAB_TEXTS: [],
     TAB_SYSTEM: [],
 }
 
@@ -426,8 +430,33 @@ def create_app() -> FastAPI:
                 "consent_docs_by_bot": consent_docs_by_bot,
                 "tab_bot_key": TAB_BOT_KEY,
                 "chat_users": chat_users,
+                "message_registry": MESSAGE_REGISTRY,
             },
         )
+
+    @app.post("/texts/save")
+    async def save_texts(request: Request) -> RedirectResponse:
+        maybe_redirect = _require_auth(request)
+        if maybe_redirect is not None:
+            return maybe_redirect
+        form = await request.form()
+        updates: dict[str, str] = {}
+        for key, _, _ in MESSAGE_REGISTRY:
+            if key in form:
+                updates[key] = str(form.get(key) or "").strip()
+        if updates:
+            await db.upsert_content_settings(updates)
+        _set_flash(request, "Тексты сохранены.")
+        return _redirect(_dashboard_url(TAB_TEXTS))
+
+    @app.post("/texts/reset")
+    async def reset_text(request: Request, key: str = Form(...)) -> RedirectResponse:
+        maybe_redirect = _require_auth(request)
+        if maybe_redirect is not None:
+            return maybe_redirect
+        await db.upsert_content_settings({key: ""})
+        _set_flash(request, f"Текст «{key}» сброшен до значения по умолчанию.")
+        return _redirect(_dashboard_url(TAB_TEXTS))
 
     @app.get("/chats/{telegram_id}")
     async def chat_view(request: Request, telegram_id: int) -> Any:
@@ -806,18 +835,28 @@ def create_app() -> FastAPI:
         if maybe_redirect is not None:
             return maybe_redirect
 
+        existing = await db.get_content_link(link_id)
+        had_file = existing is not None and (existing["file_bytes"] is not None or (existing["cached_file_id"] or ""))
+        has_new_attachment = attachment is not None and (attachment.filename or "").strip()
+
+        # Если файл уже привязан и новый не загружают, не сбрасываем — оставим существующий db_file:N
+        if had_file and not has_new_attachment and not clear_file:
+            url_to_save = (existing["url"] or "").strip()
+        else:
+            url_to_save = (url or "").strip()
+
         await db.update_content_link(
             link_id=link_id,
             section=section,
             category="",
             subcategory="",
             title=title,
-            url=url,
+            url=url_to_save,
             position=position,
             is_active=bool(is_active),
         )
 
-        if attachment is not None and (attachment.filename or "").strip():
+        if has_new_attachment:
             data = await attachment.read()
             await db.replace_content_link_file(
                 link_id=link_id,

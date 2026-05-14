@@ -94,6 +94,7 @@ from summit_partner_bot.keyboards import (
     support_chat_keyboard,
     url_keyboard,
 )
+from summit_partner_bot.messages import resolve_message
 from summit_partner_bot.middlewares import RateLimitMiddleware
 from summit_partner_bot.states import (
     AccessRequestFlow,
@@ -373,6 +374,11 @@ def _parse_broadcast_target(payload: str) -> tuple[str, str, str]:
         body = parts[1].strip() if len(parts) > 1 else ""
         return (candidate, subcategory, body)
     return (ROLE_ALL, "", text)
+
+
+async def _msg_text(db: Database, key: str, **kwargs: object) -> str:
+    settings_map = await db.get_content_settings_map()
+    return resolve_message(settings_map, key, **kwargs)
 
 
 async def _send_link_or_file(message: Message, title: str, value: str, db: Database | None = None) -> None:
@@ -752,13 +758,12 @@ async def _complete_request(
     await state.clear()
 
     if auto_approve:
-        await message.answer("✅ Регистрация завершена! Добро пожаловать в партнёрский бот.")
+        await message.answer(await _msg_text(db, "msg_partner_registered"))
         await _show_private_menu(message, db, settings, content_loader, include_public_menu=include_public_menu)
         return
 
     await message.answer(
-        "✅ Заявка отправлена организатору."
-        "\nПосле подтверждения вы получите уведомление и доступ к меню.",
+        await _msg_text(db, "msg_application_sent"),
         reply_markup=public_menu_keyboard() if include_public_menu else None,
     )
 
@@ -909,7 +914,7 @@ async def _handle_application_start(
     row = await db.get_application_by_token(token)
     if row is None:
         await message.answer(
-            "⚠️ Заявка по этой ссылке не найдена. Проверьте ссылку или заполните форму заново.",
+            await _msg_text(db, "msg_application_not_found"),
             reply_markup=public_menu_keyboard() if include_public_menu else None,
         )
         return True
@@ -931,12 +936,7 @@ async def _handle_application_start(
     await state.set_state(ApplicationLinkFlow.waiting_start)
     await state.set_data({"_app_token": token})
     await message.answer(
-        "Здравствуйте!\n"
-        "Добро пожаловать в партнёрский Telegram-бот СТАММИТ’26.\n\n"
-        "Здесь вы можете забронировать и приобрести место в экспо-зоне саммита, "
-        "оставить заявку на участие и получить всю ключевую информацию для партнёров: "
-        "доступные форматы, условия размещения, технические детали, сроки подготовки и новости проекта.\n\n"
-        "Чтобы начать оформление заявки, нажмите «Старт».",
+        await _msg_text(db, "msg_welcome_site_link"),
         reply_markup=start_application_keyboard(),
     )
     return True
@@ -959,13 +959,13 @@ async def _ensure_private_user(
     status = str(user_row["access_status"])
     if status == STATUS_PENDING:
         await message.answer(
-            "⏳ Ваша заявка ещё на согласовании у организатора.",
+            await _msg_text(db, "msg_access_pending"),
             reply_markup=public_menu_keyboard() if include_public_menu else None,
         )
         return None
     if status == STATUS_REJECTED:
         reason = str(user_row["rejection_reason"] or "").strip()
-        text = "🚫 В доступе отказано."
+        text = await _msg_text(db, "msg_access_rejected")
         if reason:
             text += f"\nПричина: {reason}"
         await message.answer(text, reply_markup=public_menu_keyboard() if include_public_menu else None)
@@ -1232,7 +1232,17 @@ async def create_dispatcher(
     dp.message.middleware(RateLimitMiddleware(settings.rate_limit_seconds))
     dp.callback_query.middleware(RateLimitMiddleware(settings.rate_limit_seconds))
 
+    async def _msg(key: str, **kwargs: object) -> str:
+        settings_map = await db.get_content_settings_map()
+        return resolve_message(settings_map, key, **kwargs)
+
+    async def _farewell_text() -> str:
+        if profile_role == ROLE_PARTNER:
+            return await _msg("msg_chat_farewell_partner")
+        return await _msg("msg_chat_farewell_default")
+
     def _chat_farewell_text(default_text: str) -> str:
+        # legacy sync wrapper, kept for places where async isn't trivial
         if profile_role == ROLE_PARTNER:
             return (
                 "Спасибо за диалог!\n\n"
@@ -1310,7 +1320,7 @@ async def create_dispatcher(
         if application_row is None:
             await state.clear()
             await message.answer(
-                "⚠️ Ссылка устарела. Откройте её заново с сайта.",
+                await _msg("msg_application_link_expired"),
                 reply_markup=public_menu_keyboard() if include_public_menu else None,
             )
             return
@@ -1652,12 +1662,7 @@ async def create_dispatcher(
 
         await state.update_data(phone=phone.strip())
         if profile_role == ROLE_PARTNER:
-            await message.answer(
-                "Спасибо! Ваш контакт получен.\n\n"
-                "За вами предварительно зафиксировано выбранное место в экспо-зоне СТАММИТ’26.\n\n"
-                "В ближайшее время в этот чат подключится менеджер партнёрского отдела, "
-                "чтобы уточнить детали участия, подтвердить место, рассказать о комплектации и дальнейших шагах."
-            )
+            await message.answer(await _msg("msg_contact_received_partner"))
         await state.set_state(NoCodeRegistrationFlow.waiting_email)
         await message.answer("✉️ Укажите email для связи:", reply_markup=cancel_keyboard())
 
@@ -2485,7 +2490,7 @@ async def create_dispatcher(
 
         user_row = await db.get_user(message.from_user.id)
         await message.answer(
-            _chat_farewell_text("✅ Диалог завершён. Если понадобится — обращайтесь снова."),
+            await _msg("msg_chat_farewell_partner") if profile_role == ROLE_PARTNER else await _msg("msg_user_closed_chat"),
             reply_markup=private_keyboard(str(user_row["role"])) if user_row else public_menu_keyboard(),
         )
 
@@ -2508,7 +2513,7 @@ async def create_dispatcher(
 
         if operator_id is None and not settings.support_chat_ids and not settings.admin_ids:
             await message.answer(
-                "🧑‍💼 Поддержка временно недоступна. Попробуйте позже.",
+                await _msg("msg_support_unavailable"),
                 reply_markup=private_keyboard(role),
             )
             return
@@ -2552,9 +2557,7 @@ async def create_dispatcher(
                 logger.exception("Failed to notify support chat %s about new session", chat_id)
 
         await message.answer(
-            "🧑‍💼 Вы открыли диалог с поддержкой.\n"
-            "Менеджер скоро подключится. Пока можете писать сообщения — они уйдут менеджеру.\n"
-            "Когда захотите завершить — нажмите «❌ Завершить чат».",
+            await _msg("msg_support_opened"),
             reply_markup=support_chat_keyboard(),
         )
 
@@ -2688,11 +2691,7 @@ async def create_dispatcher(
         try:
             await message.bot.send_message(
                 chat_id=user_id,
-                text=(
-                    "🧑‍💼 Менеджер подключился к диалогу.\n"
-                    "Все ваши сообщения теперь уходят менеджеру. "
-                    "Чтобы выйти — нажмите «❌ Завершить чат»."
-                ),
+                text=await _msg("msg_manager_connected_user"),
                 reply_markup=support_chat_keyboard(),
             )
         except Exception:  # noqa: BLE001
@@ -2726,7 +2725,7 @@ async def create_dispatcher(
             user_kb = private_keyboard(str(user_row["role"])) if user_row else public_menu_keyboard()
             await message.bot.send_message(
                 chat_id=user_id,
-                text=_chat_farewell_text("🧑‍💼 Менеджер завершил диалог. Если будет нужно — обращайтесь снова."),
+                text=await _farewell_text(),
                 reply_markup=user_kb,
             )
         except Exception:  # noqa: BLE001
@@ -2762,12 +2761,12 @@ async def create_dispatcher(
             if subcategory:
                 await message.bot.send_message(
                     chat_id=user_id,
-                    text=f"✅ Менеджер назначил вам подкатегорию: {subcategory}.",
+                    text=await _msg("msg_subcategory_set_user", subcategory=subcategory),
                 )
             else:
                 await message.bot.send_message(
                     chat_id=user_id,
-                    text="ℹ️ Ваша подкатегория была сброшена менеджером.",
+                    text=await _msg("msg_subcategory_cleared_user"),
                 )
         except Exception:  # noqa: BLE001
             logger.exception("Failed to notify user about subcategory change %s", user_id)
@@ -3320,7 +3319,7 @@ async def create_dispatcher(
             kb = private_keyboard(str(user_row["role"])) if user_row else public_menu_keyboard()
             await message.bot.send_message(
                 chat_id=user_id,
-                text=_chat_farewell_text("🧑‍💼 Менеджер завершил диалог. Если будет нужно — обращайтесь снова."),
+                text=await _farewell_text(),
                 reply_markup=kb,
             )
         except Exception:  # noqa: BLE001
@@ -3357,7 +3356,7 @@ async def create_dispatcher(
             kb = private_keyboard(str(user_row["role"])) if user_row else public_menu_keyboard()
             await callback.bot.send_message(
                 chat_id=user_id,
-                text=_chat_farewell_text("🧑‍💼 Менеджер завершил диалог. Если будет нужно — обращайтесь снова."),
+                text=await _farewell_text(),
                 reply_markup=kb,
             )
         except Exception:  # noqa: BLE001
