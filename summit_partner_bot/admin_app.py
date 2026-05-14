@@ -198,6 +198,24 @@ def _bot_token_for_user(settings: Any, role: str | None, bot_key: str | None) ->
     return settings.summit_bot_token, "summit"
 
 
+async def _effective_support_chat_ids(db: Any, settings: Any) -> set[int]:
+    smap = await db.get_content_settings_map()
+    raw = (smap.get("support_chat_ids_override") or "").strip()
+    if raw:
+        ids: set[int] = set()
+        for part in raw.split(","):
+            part = part.strip()
+            if not part:
+                continue
+            try:
+                ids.add(int(part))
+            except ValueError:
+                continue
+        if ids:
+            return ids
+    return set(settings.support_chat_ids)
+
+
 def _parse_admin_datetime(value: str | None) -> datetime | None:
     text = (value or "").strip()
     if not text:
@@ -600,10 +618,11 @@ def create_app() -> FastAPI:
             )
             existing_session = await db.get_active_support_session(telegram_id)
             if existing_session is None:
+                effective_support = await _effective_support_chat_ids(db, settings)
                 if operator_id is not None:
                     support_chat_id = operator_id
-                elif settings.support_chat_ids:
-                    support_chat_id = next(iter(settings.support_chat_ids))
+                elif effective_support:
+                    support_chat_id = next(iter(effective_support))
                 elif settings.admin_ids:
                     support_chat_id = next(iter(settings.admin_ids))
                 else:
@@ -1035,6 +1054,41 @@ def create_app() -> FastAPI:
         else:
             _set_flash(request, f"Рассылка запланирована через {minutes} мин. Получателей: {recipients_count}. ID: {', '.join(map(str, broadcast_ids))}.")
         return _redirect(_dashboard_url(_sanitize_tab(tab)))
+
+    @app.post("/chats/support-ids")
+    async def save_support_chat_ids(request: Request) -> RedirectResponse:
+        maybe_redirect = _require_auth(request)
+        if maybe_redirect is not None:
+            return maybe_redirect
+        form = await request.form()
+        # multi-select sends multiple values under the same name
+        raw_values = form.getlist("support_chat_ids") if hasattr(form, "getlist") else [str(form.get("support_chat_ids") or "")]
+        # Также поддерживаем ручной ввод через текстовое поле
+        manual = str(form.get("support_chat_ids_manual") or "").strip()
+        ids: set[str] = set()
+        for value in raw_values:
+            value = (value or "").strip()
+            if value:
+                try:
+                    ids.add(str(int(value)))
+                except ValueError:
+                    continue
+        if manual:
+            for chunk in manual.replace(";", ",").split(","):
+                chunk = chunk.strip()
+                if not chunk:
+                    continue
+                try:
+                    ids.add(str(int(chunk)))
+                except ValueError:
+                    continue
+        override = ",".join(sorted(ids, key=lambda v: int(v)))
+        await db.upsert_content_settings({"support_chat_ids_override": override})
+        if override:
+            _set_flash(request, f"Получатели уведомлений поддержки сохранены: {override}.")
+        else:
+            _set_flash(request, "Список получателей сброшен — будут использоваться значения из .env.")
+        return _redirect(_dashboard_url(TAB_CHATS))
 
     @app.post("/chats/operator")
     async def save_chat_operator(

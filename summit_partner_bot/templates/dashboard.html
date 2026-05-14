@@ -243,6 +243,27 @@
     }
     .msg-save-row { display: flex; justify-content: flex-end; padding: 8px 0; position: sticky; bottom: 8px; background: rgba(255,255,255,0.95); border-radius: 8px; }
     .msg-save-row button { padding: 10px 22px; font-size: 14px; }
+
+    /* Список получателей поддержки */
+    .support-id-list {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+      gap: 6px;
+      margin: 6px 0;
+    }
+    .support-id-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 10px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fff;
+      cursor: pointer;
+      font-size: 13px;
+    }
+    .support-id-row input[type="checkbox"] { width: auto; }
+    .support-id-row:hover { background: #f4f7fc; }
   </style>
 </head>
 <body>
@@ -596,6 +617,46 @@
           <div class="muted">Текущий оператор: <b>{{ settings_map.get('chat_operator_name') or '—' }}</b> (ID {{ settings_map.get('chat_operator_id') }})</div>
         {% else %}
           <div class="muted">Оператор не назначен — диалоги уходят всем администраторам.</div>
+        {% endif %}
+      </section>
+
+      <section>
+        <h2>Получатели уведомлений поддержки</h2>
+        <p class="muted">Кому уходят уведомления о новых диалогах с поддержкой (аналог переменной <code>SUPPORT_CHAT_IDS</code>). Если ничего не выбрано — используются значения из <code>.env</code>. Можно отметить администраторов галочками и/или добавить ID вручную через запятую (например, ID Telegram-группы поддержки).</p>
+        {% set current_support_raw = settings_map.get('support_chat_ids_override', '') %}
+        {% set current_support_ids = [] %}
+        {% if current_support_raw %}
+          {% for part in current_support_raw.split(',') %}
+            {% set p = part.strip() %}
+            {% if p %}{% set _ = current_support_ids.append(p) %}{% endif %}
+          {% endfor %}
+        {% endif %}
+        {% set ns_extra = namespace(extras=[]) %}
+        {% for sid in current_support_ids %}
+          {% set ns_match = namespace(found=false) %}
+          {% for c in admin_candidates %}{% if c.id == sid %}{% set ns_match.found = true %}{% endif %}{% endfor %}
+          {% if not ns_match.found %}{% set _ = ns_extra.extras.append(sid) %}{% endif %}
+        {% endfor %}
+        <form method="post" action="/chats/support-ids">
+          {% if admin_candidates %}
+            <div class="support-id-list">
+              {% for c in admin_candidates %}
+                <label class="support-id-row">
+                  <input type="checkbox" name="support_chat_ids" value="{{ c.id }}" {% if c.id in current_support_ids %}checked{% endif %}>
+                  <span><b>{{ c.id }}</b> · <span class="muted">{{ c.note }}</span></span>
+                </label>
+              {% endfor %}
+            </div>
+          {% endif %}
+          <div class="row" style="margin-top:8px;">
+            <input class="c9" name="support_chat_ids_manual" value="{{ ns_extra.extras | join(',') }}" placeholder="Доп. ID через запятую (например, -1001234567890 для группы)">
+            <button class="c3" type="submit">Сохранить</button>
+          </div>
+        </form>
+        {% if current_support_raw %}
+          <div class="muted">Сейчас в БД: <b>{{ current_support_raw }}</b></div>
+        {% else %}
+          <div class="muted">Сейчас используются значения из .env: <b>{{ env_admin_ids | join(', ') if env_admin_ids else '—' }}</b></div>
         {% endif %}
       </section>
 

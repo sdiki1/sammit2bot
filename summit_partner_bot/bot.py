@@ -376,6 +376,24 @@ def _parse_broadcast_target(payload: str) -> tuple[str, str, str]:
     return (ROLE_ALL, "", text)
 
 
+async def _effective_support_chat_ids(db: Database, settings: Settings) -> set[int]:
+    smap = await db.get_content_settings_map()
+    raw = (smap.get("support_chat_ids_override") or "").strip()
+    if raw:
+        ids: set[int] = set()
+        for part in raw.split(","):
+            part = part.strip()
+            if not part:
+                continue
+            try:
+                ids.add(int(part))
+            except ValueError:
+                continue
+        if ids:
+            return ids
+    return (await _effective_support_chat_ids(db, settings))
+
+
 async def _msg_text(db: Database, key: str, **kwargs: object) -> str:
     settings_map = await db.get_content_settings_map()
     return resolve_message(settings_map, key, **kwargs)
@@ -541,7 +559,7 @@ async def _notify_access_request(
     ]
     text = "\n".join(lines)
 
-    targets = set(settings.admin_ids) | set(settings.support_chat_ids)
+    targets = set(settings.admin_ids) | (await _effective_support_chat_ids(db, settings))
     for chat_id in targets:
         try:
             await bot.send_message(chat_id=chat_id, text=text)
@@ -581,7 +599,7 @@ async def _notify_application(
     ]
     text = "\n".join(lines)
 
-    targets = set(settings.admin_ids) | set(settings.support_chat_ids)
+    targets = set(settings.admin_ids) | (await _effective_support_chat_ids(db, settings))
     for chat_id in targets:
         try:
             await bot.send_message(chat_id=chat_id, text=text)
@@ -1267,7 +1285,7 @@ async def create_dispatcher(
     async def _user_in_active_support(message: Message) -> bool:
         if not message.from_user:
             return False
-        if message.chat.id in settings.support_chat_ids:
+        if message.chat.id in (await _effective_support_chat_ids(db, settings)):
             return False
         text = (message.text or "").strip()
         if text == BTN_CLOSE_CHAT:
@@ -2052,7 +2070,7 @@ async def create_dispatcher(
             f"{text}"
         )
 
-        targets = set(settings.admin_ids) | set(settings.support_chat_ids)
+        targets = set(settings.admin_ids) | (await _effective_support_chat_ids(db, settings))
         for chat_id in targets:
             try:
                 await message.bot.send_message(chat_id=chat_id, text=notify_text)
@@ -2493,7 +2511,7 @@ async def create_dispatcher(
             f"ℹ️ Пользователь завершил диалог.\n"
             f"#USER_{message.from_user.id}"
         )
-        targets = set(settings.admin_ids) | set(settings.support_chat_ids)
+        targets = set(settings.admin_ids) | (await _effective_support_chat_ids(db, settings))
         for chat_id in targets:
             try:
                 await message.bot.send_message(chat_id=chat_id, text=notice)
@@ -2523,7 +2541,8 @@ async def create_dispatcher(
             except ValueError:
                 operator_id = None
 
-        if operator_id is None and not settings.support_chat_ids and not settings.admin_ids:
+        _support_ids_now = await _effective_support_chat_ids(db, settings)
+        if operator_id is None and not _support_ids_now and not settings.admin_ids:
             await message.answer(
                 await _msg("msg_support_unavailable"),
                 reply_markup=private_keyboard(role),
@@ -2534,8 +2553,8 @@ async def create_dispatcher(
 
         if operator_id is not None:
             primary_chat_id = operator_id
-        elif settings.support_chat_ids:
-            primary_chat_id = next(iter(settings.support_chat_ids))
+        elif _support_ids_now:
+            primary_chat_id = next(iter(_support_ids_now))
         else:
             primary_chat_id = next(iter(settings.admin_ids))
         await db.connect_support_session(
@@ -2561,7 +2580,7 @@ async def create_dispatcher(
         if operator_id is not None:
             targets = {operator_id}
         else:
-            targets = set(settings.admin_ids) | set(settings.support_chat_ids)
+            targets = set(settings.admin_ids) | (await _effective_support_chat_ids(db, settings))
         for chat_id in targets:
             try:
                 await message.bot.send_message(chat_id=chat_id, text=notify_header)
@@ -2585,7 +2604,8 @@ async def create_dispatcher(
 
         role = normalize_role(str(user_row["role"]))
 
-        if not settings.support_chat_ids:
+        _support_ids_now = await _effective_support_chat_ids(db, settings)
+        if not _support_ids_now:
             await state.clear()
             await message.answer(
                 "⚠️ Поддержка не настроена. Обратитесь к организатору.",
@@ -2615,7 +2635,7 @@ async def create_dispatcher(
         )
 
         delivered_to_support = 0
-        for chat_id in settings.support_chat_ids:
+        for chat_id in _support_ids_now:
             try:
                 meta_message = await message.bot.send_message(chat_id=chat_id, text=question_header)
                 delivered_to_support += 1
@@ -2662,7 +2682,7 @@ async def create_dispatcher(
     async def manager_connect_user(message: Message) -> None:
         if not message.from_user:
             return
-        if message.chat.id not in settings.support_chat_ids and not await _is_admin_message(message, settings, db):
+        if message.chat.id not in (await _effective_support_chat_ids(db, settings)) and not await _is_admin_message(message, settings, db):
             return
 
         payload = _extract_command_payload(message.text or "")
@@ -2676,8 +2696,9 @@ async def create_dispatcher(
             return
 
         support_chat_id = message.chat.id
-        if support_chat_id not in settings.support_chat_ids and settings.support_chat_ids:
-            support_chat_id = next(iter(settings.support_chat_ids))
+        _support_ids_now = await _effective_support_chat_ids(db, settings)
+        if support_chat_id not in _support_ids_now and _support_ids_now:
+            support_chat_id = next(iter(_support_ids_now))
 
         prior = await db.get_active_session_by_manager(message.from_user.id)
         if prior is not None and int(prior["telegram_id"]) != user_id:
@@ -2713,7 +2734,7 @@ async def create_dispatcher(
     async def manager_disconnect_user(message: Message) -> None:
         if not message.from_user:
             return
-        if message.chat.id not in settings.support_chat_ids and not await _is_admin_message(message, settings, db):
+        if message.chat.id not in (await _effective_support_chat_ids(db, settings)) and not await _is_admin_message(message, settings, db):
             return
 
         payload = _extract_command_payload(message.text or "")
@@ -2747,7 +2768,7 @@ async def create_dispatcher(
     async def manager_set_subcategory(message: Message) -> None:
         if not message.from_user:
             return
-        if message.chat.id not in settings.support_chat_ids and not await _is_admin_message(message, settings, db):
+        if message.chat.id not in (await _effective_support_chat_ids(db, settings)) and not await _is_admin_message(message, settings, db):
             return
 
         payload = _extract_command_payload(message.text or "")
@@ -3317,7 +3338,7 @@ async def create_dispatcher(
     async def manager_close_chat(message: Message) -> None:
         if not message.from_user:
             return
-        if message.chat.id not in settings.support_chat_ids and not await _is_admin_message(message, settings, db):
+        if message.chat.id not in (await _effective_support_chat_ids(db, settings)) and not await _is_admin_message(message, settings, db):
             return
         session = await db.get_active_session_by_manager(message.from_user.id)
         if session is None:
@@ -3419,7 +3440,7 @@ async def create_dispatcher(
     async def bridge_manager_reply(message: Message) -> None:
         if not message.from_user:
             return
-        if message.chat.id not in settings.support_chat_ids and not await _is_admin_message(message, settings, db):
+        if message.chat.id not in (await _effective_support_chat_ids(db, settings)) and not await _is_admin_message(message, settings, db):
             return
         if message.from_user.id == bot.id:
             return
@@ -3461,7 +3482,7 @@ async def create_dispatcher(
 
     @router.message()
     async def fallback(message: Message, state: FSMContext) -> None:
-        if message.chat.id in settings.support_chat_ids:
+        if message.chat.id in (await _effective_support_chat_ids(db, settings)):
             return
 
         if not message.from_user:
