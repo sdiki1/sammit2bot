@@ -1146,6 +1146,34 @@ class Database:
                 telegram_id,
             )
 
+    async def upsert_public_contact(
+        self,
+        telegram_id: int,
+        username: str | None,
+        first_name: str | None,
+        phone: str,
+    ) -> None:
+        """Создаёт/обновляет публичную запись пользователя с телефоном (без роли/доступа)."""
+        async with self.pool.acquire() as conn:
+            await conn.execute(
+                """
+                INSERT INTO users(
+                    telegram_id, username, first_name, role, access_status,
+                    access_code, phone, registered_at
+                )
+                VALUES ($1, $2, $3, $4, 'approved', '', $5, NOW())
+                ON CONFLICT(telegram_id) DO UPDATE SET
+                    username = COALESCE(EXCLUDED.username, users.username),
+                    first_name = COALESCE(EXCLUDED.first_name, users.first_name),
+                    phone = EXCLUDED.phone
+                """,
+                telegram_id,
+                username,
+                first_name,
+                ROLE_ALL,  # «общий» пользователь, без специфической роли
+                phone.strip() or None,
+            )
+
     async def upsert_content_settings(self, values: dict[str, str]) -> None:
         if not values:
             return

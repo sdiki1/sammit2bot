@@ -64,6 +64,10 @@ TAB_PARTNERS = "partners"
 TAB_EXPERTS = "experts"
 TAB_INFLUENCERS = "influencers"
 TAB_CHATS = "chats"
+TAB_APPLICATIONS = "applications"
+TAB_BROADCASTS = "broadcasts"
+TAB_USERS = "users"
+TAB_FEEDBACK = "feedback"
 TAB_TEXTS = "texts"
 TAB_SYSTEM = "system"
 
@@ -74,14 +78,30 @@ TAB_BOT_KEY = {
     TAB_INFLUENCERS: "influencer",
 }
 
-TAB_ORDER = [TAB_PUBLIC, TAB_PARTNERS, TAB_EXPERTS, TAB_INFLUENCERS, TAB_CHATS, TAB_TEXTS, TAB_SYSTEM]
+TAB_ORDER = [
+    TAB_PUBLIC,
+    TAB_PARTNERS,
+    TAB_EXPERTS,
+    TAB_INFLUENCERS,
+    TAB_CHATS,
+    TAB_APPLICATIONS,
+    TAB_BROADCASTS,
+    TAB_USERS,
+    TAB_FEEDBACK,
+    TAB_TEXTS,
+    TAB_SYSTEM,
+]
 TAB_TITLES = {
     TAB_PUBLIC: "Публичное",
     TAB_PARTNERS: "Партнёры",
     TAB_EXPERTS: "Эксперты",
     TAB_INFLUENCERS: "Инфлюенсеры",
     TAB_CHATS: "Переписка",
-    TAB_TEXTS: "Тексты",
+    TAB_APPLICATIONS: "Заявки/брони",
+    TAB_BROADCASTS: "Рассылки",
+    TAB_USERS: "Все пользователи",
+    TAB_FEEDBACK: "Отзывы",
+    TAB_TEXTS: "Скрипты",
     TAB_SYSTEM: "Сервис",
 }
 
@@ -104,6 +124,10 @@ TAB_SECTIONS = {
     TAB_EXPERTS: [SECTION_EXPERT_USEFUL_LINKS, SECTION_EXPERT_MATERIALS],
     TAB_INFLUENCERS: [SECTION_INFLUENCER_USEFUL_LINKS, SECTION_INFLUENCER_MATERIALS],
     TAB_CHATS: [],
+    TAB_APPLICATIONS: [],
+    TAB_BROADCASTS: [],
+    TAB_USERS: [],
+    TAB_FEEDBACK: [],
     TAB_TEXTS: [],
     TAB_SYSTEM: [],
 }

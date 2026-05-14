@@ -709,7 +709,7 @@
 
     {% if active_tab == 'texts' %}
       <section>
-        <h2>Тексты сообщений бота</h2>
+        <h2>Скрипты бота</h2>
         <p class="muted">Тексты, которые бот отправляет пользователям. Пустое поле = вернётся значение по умолчанию. В некоторых текстах поддерживаются переменные в фигурных скобках, например <code>{subcategory}</code>.</p>
         <form method="post" action="/texts/save" class="msg-texts-form">
           {% for key, label, default in message_registry %}
@@ -773,7 +773,9 @@
           <div class="muted">Дополнительные Telegram-администраторы не добавлены.</div>
         {% endif %}
       </section>
+    {% endif %}
 
+    {% if active_tab == 'applications' %}
       <section>
         <h2>Заявки и бронирование стендов</h2>
         {% if applications %}
@@ -837,51 +839,11 @@
           <div class="muted">Нет активных сессий.</div>
         {% endif %}
       </section>
+    {% endif %}
 
-      <div class="grid-2">
-        <section>
-          <h2>Заявки на доступ</h2>
-          {% if pending_users %}
-            <table>
-              <thead>
-                <tr><th>Telegram</th><th>Роль</th><th>Подкатегория</th><th>ФИО</th><th>Телефон</th><th>Email</th><th>Компания</th><th>ИНН</th><th>Согласие</th><th>Действия</th></tr>
-              </thead>
-              <tbody>
-                {% for u in pending_users %}
-                  <tr>
-                    <td>{{ u.telegram_id }}</td>
-                    <td>{{ role_label(u.role) }}</td>
-                    <td>{{ u.subcategory or '-' }}</td>
-                    <td>{{ u.full_name or u.first_name or '-' }}</td>
-                    <td>{{ u.phone or '-' }}</td>
-                    <td>{{ u.email or '-' }}</td>
-                    <td>{{ u.company or '-' }}</td>
-                    <td>{{ u.inn or '-' }}</td>
-                    <td>{% if u.consent_accepted %}да{% else %}нет{% endif %}</td>
-                    <td>
-                      <form method="post" action="/users/approve" class="row">
-                        <input type="hidden" name="tab" value="{{ active_tab }}">
-                        <input type="hidden" name="telegram_id" value="{{ u.telegram_id }}">
-                        <button class="ok" type="submit">Одобрить</button>
-                      </form>
-                      <form method="post" action="/users/reject" class="row">
-                        <input type="hidden" name="tab" value="{{ active_tab }}">
-                        <input type="hidden" name="telegram_id" value="{{ u.telegram_id }}">
-                        <input type="text" name="reason" placeholder="Причина">
-                        <button class="danger" type="submit">Отклонить</button>
-                      </form>
-                    </td>
-                  </tr>
-                {% endfor %}
-              </tbody>
-            </table>
-          {% else %}
-            <div class="muted">Нет заявок в ожидании.</div>
-          {% endif %}
-        </section>
-
-        <section>
-          <h2>Рассылки</h2>
+    {% if active_tab == 'broadcasts' %}
+      <section>
+        <h2>Рассылки</h2>
           <form method="post" action="/broadcasts/create" class="row" enctype="multipart/form-data">
             <input type="hidden" name="tab" value="{{ active_tab }}">
             <textarea class="c12" name="message_text" placeholder="Текст рассылки или подпись к изображению"></textarea>
@@ -937,9 +899,10 @@
               {% endfor %}
             </tbody>
           </table>
-        </section>
-      </div>
+      </section>
+    {% endif %}
 
+    {% if active_tab == 'users' %}
       <section>
         <h2>Все пользователи</h2>
         <table>
@@ -984,7 +947,9 @@
           </tbody>
         </table>
       </section>
+    {% endif %}
 
+    {% if active_tab == 'feedback' %}
       <section>
         <h2>Отзывы</h2>
         <table>

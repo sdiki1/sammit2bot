@@ -104,6 +104,7 @@ from summit_partner_bot.states import (
     FeedbackFlow,
     NavigationFlow,
     NoCodeRegistrationFlow,
+    PublicContactFlow,
     SupportFlow,
 )
 
@@ -1334,6 +1335,37 @@ async def create_dispatcher(
                 reply_markup=support_chat_keyboard(),
             )
 
+    @router.message(PublicContactFlow.waiting_contact)
+    async def handle_public_contact(message: Message, state: FSMContext) -> None:
+        if not message.from_user:
+            return
+        phone = ""
+        if message.contact is not None:
+            if message.contact.user_id and message.contact.user_id != message.from_user.id:
+                await message.answer(
+                    "⚠️ Отправьте свой контакт или введите номер сообщением.",
+                    reply_markup=contact_request_keyboard(),
+                )
+                return
+            phone = (message.contact.phone_number or "").strip()
+        else:
+            phone = (message.text or "").strip()
+        if not PHONE_RE.match(phone):
+            await message.answer(
+                await _msg("msg_invalid_phone"),
+                reply_markup=contact_request_keyboard(),
+            )
+            return
+        await db.upsert_public_contact(
+            telegram_id=message.from_user.id,
+            username=message.from_user.username,
+            first_name=message.from_user.first_name,
+            phone=phone,
+        )
+        await state.clear()
+        await message.answer("✅ Спасибо! Доступ открыт.")
+        await _show_public_menu(message, content_loader)
+
     @router.message(ApplicationLinkFlow.waiting_start)
     async def handle_application_start_click(message: Message, state: FSMContext) -> None:
         if not message.from_user:
@@ -1385,13 +1417,8 @@ async def create_dispatcher(
             user_row = await db.get_user(message.from_user.id)
             if _is_access_granted(user_row):
                 await _show_private_menu(message, db, settings, content_loader, include_public_menu=include_public_menu)
-            elif profile_role == ROLE_PARTNER:
-                await _start_no_code_registration(message, state, ROLE_PARTNER)
             else:
-                await message.answer(
-                    f"Введите код приглашения для роли «{role_title(profile_role)}».",
-                    reply_markup=code_or_register_keyboard(),
-                )
+                await _start_no_code_registration(message, state, profile_role)
 
     @router.message(CommandStart())
     async def cmd_start(message: Message, state: FSMContext) -> None:
@@ -1458,8 +1485,28 @@ async def create_dispatcher(
 
         if not profile_role:
             await state.clear()
+            if user_row is None:
+                await message.answer(await _msg("welcome_summit_bot"))
+            phone_known = bool(user_row and (user_row["phone"] or "").strip()) if user_row else False
+            if not phone_known:
+                await state.set_state(PublicContactFlow.waiting_contact)
+                await message.answer(
+                    "📞 Чтобы продолжить, поделитесь, пожалуйста, номером телефона.\n"
+                    "Нажмите кнопку ниже или отправьте номер сообщением (например, +79991234567).",
+                    reply_markup=contact_request_keyboard(),
+                )
+                return
             await _show_public_menu(message, content_loader)
             return
+
+        if user_row is None:
+            welcome_key = {
+                ROLE_PARTNER: "welcome_partner_bot",
+                ROLE_EXPERT: "welcome_expert_bot",
+                ROLE_INFLUENCER: "welcome_influencer_bot",
+            }.get(profile_role)
+            if welcome_key:
+                await message.answer(await _msg(welcome_key))
 
         if _is_access_granted(user_row):
             if profile_role and normalize_role(str(user_row["role"])) != profile_role:
@@ -1512,17 +1559,7 @@ async def create_dispatcher(
             return
 
         if profile_role:
-            if profile_role == ROLE_PARTNER:
-                await _start_no_code_registration(message, state, ROLE_PARTNER)
-                return
-            await state.set_state(AccessRequestFlow.waiting_access_code)
-            await state.set_data({"entry_role": profile_role})
-            await message.answer(
-                f"Добро пожаловать в бот для роли «{role_title(profile_role)}».\n"
-                "Введите код приглашения, откройте персональную ссылку от организатора "
-                "или подайте заявку без кода.",
-                reply_markup=code_or_register_keyboard(),
-            )
+            await _start_no_code_registration(message, state, profile_role)
             return
 
         await _show_public_menu(message, content_loader)
@@ -1747,16 +1784,7 @@ async def create_dispatcher(
             await message.answer("⚠️ ИНН должен содержать 10 или 12 цифр. Отправьте ИНН или «-».")
             return
 
-        await state.update_data(inn=inn)
-        await state.set_state(NoCodeRegistrationFlow.waiting_booth)
-        await message.answer("🏗 Укажите интересующий стенд или отправьте «-», если пока не выбрали:")
-
-    @router.message(NoCodeRegistrationFlow.waiting_booth)
-    async def no_code_booth(message: Message, state: FSMContext) -> None:
-        booth = (message.text or "").strip()
-        if booth == "-":
-            booth = ""
-        await state.update_data(booth_number=booth)
+        await state.update_data(inn=inn, booth_number="")
         await state.set_state(NoCodeRegistrationFlow.waiting_consent)
         await message.answer(
             "Для отправки заявки нужно согласие на обработку персональных данных.",
@@ -1803,7 +1831,7 @@ async def create_dispatcher(
             application_source="no_code",
             application_text=source_text,
             include_public_menu=include_public_menu,
-            auto_approve=(profile_role == ROLE_PARTNER),
+            auto_approve=bool(profile_role),
         )
 
     @router.message(AccessRequestFlow.waiting_partner_inn)
@@ -2002,9 +2030,6 @@ async def create_dispatcher(
         if text in ROLE_ENTRY_BUTTONS:
             role = ROLE_ENTRY_BUTTONS[text]
             if not profile_role:
-                if role == ROLE_PARTNER:
-                    await _start_no_code_registration(message, state, ROLE_PARTNER)
-                    return
                 if await _send_role_bot_transition(message, settings, role):
                     return
                 await message.answer("Профильный бот для этой роли пока не настроен.", reply_markup=public_menu_keyboard())
