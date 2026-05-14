@@ -61,6 +61,60 @@ BTN_SHARE_CONTACT = "📱 Поделиться контактом"
 BTN_CONSENT_ACCEPT = "✅ Согласен"
 BTN_CLOSE_CHAT = "❌ Завершить чат"
 BTN_START_APPLICATION = "🚀 Старт"
+BTN_INFLUENCER_ALREADY = "Я уже инфлюенсер проекта"
+BTN_INFLUENCER_APPLY = "Хочу стать инфлюенсером СТАММИТ’26"
+BTN_INFL_SKIP = "⏭ Пропустить"
+
+BTN_EXPERT_ALREADY = "Я уже спикер"
+BTN_EXPERT_APPLY = "Хочу оставить заявку на доклад"
+BTN_EXPERT_OTHER = "Другое"
+
+EXPERT_FORMATS = [
+    "Онлайн-конференция",
+    "Трек «Прокачка клиник»",
+    "Экспертное участие в менторской зоне",
+    "Выступление в открытом лектории",
+    "Сцена СТАММИТ, 2 зал",
+    "Круглые столы на СТАММИТ",
+    "Другое",
+]
+EXPERT_AUDIENCES = [
+    "Владельцы клиник",
+    "Главные врачи",
+    "Врачи-стоматологи",
+    "Управляющие / администраторы",
+    "Маркетологи клиник",
+    "Студенты / ординаторы",
+    "Партнёры и представители бизнеса",
+    "Другое",
+]
+EXPERT_EXPERIENCES = [
+    "Да",
+    "Нет",
+    "Выступал(а) онлайн",
+    "Выступал(а) на крупных мероприятиях",
+]
+
+INFL_PLATFORMS = ["Instagram", "Telegram", "VK", "YouTube", "TikTok", "Другое"]
+INFL_TOPICS = ["Стоматология", "Медицина", "Бизнес", "Маркетинг", "Личный бренд", "Образование", "Lifestyle", "Другое"]
+INFL_COLLAB = [
+    "Информационное партнёрство",
+    "Бартер",
+    "Промокод / партнёрская ссылка",
+    "Съёмка контента на мероприятии",
+    "Участие в квестах / активностях",
+    "Другое",
+]
+INFL_FORMATS = [
+    "Stories",
+    "Reels / Shorts",
+    "Пост",
+    "Telegram-публикация",
+    "YouTube-интеграция",
+    "Прямой эфир",
+    "Обзор мероприятия",
+    "Другое",
+]
 
 
 def _chunk_buttons(items: list[str], width: int = 2) -> list[list[KeyboardButton]]:
@@ -122,6 +176,38 @@ def contact_request_keyboard() -> ReplyKeyboardMarkup:
         resize_keyboard=True,
         one_time_keyboard=True,
     )
+
+
+def expert_start_keyboard() -> ReplyKeyboardMarkup:
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text=BTN_EXPERT_ALREADY)],
+            [KeyboardButton(text=BTN_EXPERT_APPLY)],
+        ],
+        resize_keyboard=True,
+        one_time_keyboard=True,
+    )
+
+
+def influencer_start_keyboard() -> ReplyKeyboardMarkup:
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text=BTN_INFLUENCER_ALREADY)],
+            [KeyboardButton(text=BTN_INFLUENCER_APPLY)],
+        ],
+        resize_keyboard=True,
+        one_time_keyboard=True,
+    )
+
+
+def options_keyboard(options: list[str], add_skip: bool = False) -> ReplyKeyboardMarkup:
+    rows: list[list[KeyboardButton]] = []
+    for i in range(0, len(options), 2):
+        rows.append([KeyboardButton(text=opt) for opt in options[i:i + 2]])
+    if add_skip:
+        rows.append([KeyboardButton(text=BTN_INFL_SKIP)])
+    rows.append([KeyboardButton(text=BTN_CANCEL)])
+    return ReplyKeyboardMarkup(keyboard=rows, resize_keyboard=True, one_time_keyboard=False)
 
 
 def start_application_keyboard() -> ReplyKeyboardMarkup:

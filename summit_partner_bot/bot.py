@@ -60,6 +60,19 @@ from summit_partner_bot.keyboards import (
     BTN_CLINIC_BOOST,
     BTN_CLOSE_CHAT,
     BTN_CONSENT_ACCEPT,
+    BTN_EXPERT_ALREADY,
+    BTN_EXPERT_APPLY,
+    BTN_EXPERT_OTHER,
+    BTN_INFLUENCER_ALREADY,
+    BTN_INFLUENCER_APPLY,
+    BTN_INFL_SKIP,
+    EXPERT_AUDIENCES,
+    EXPERT_EXPERIENCES,
+    EXPERT_FORMATS,
+    INFL_COLLAB,
+    INFL_FORMATS,
+    INFL_PLATFORMS,
+    INFL_TOPICS,
     BTN_START_APPLICATION,
     BTN_FAQ,
     BTN_FEEDBACK,
@@ -87,6 +100,9 @@ from summit_partner_bot.keyboards import (
     code_or_register_keyboard,
     consent_keyboard,
     contact_request_keyboard,
+    expert_start_keyboard,
+    influencer_start_keyboard,
+    options_keyboard,
     private_menu_keyboard,
     public_menu_keyboard,
     section_keyboard,
@@ -101,7 +117,11 @@ from summit_partner_bot.states import (
     ApplicationLinkFlow,
     BoothBookingFlow,
     ConsentFlow,
+    ExpertApplicationFlow,
+    ExpertStartFlow,
     FeedbackFlow,
+    InfluencerApplicationFlow,
+    InfluencerStartFlow,
     NavigationFlow,
     NoCodeRegistrationFlow,
     PublicContactFlow,
@@ -836,6 +856,11 @@ async def _start_no_code_registration(message: Message, state: FSMContext, role:
     )
 
 
+async def _show_influencer_start(message: Message, state: FSMContext) -> None:
+    await state.set_state(InfluencerStartFlow.waiting_choice)
+    await message.answer("Выберите действие:", reply_markup=influencer_start_keyboard())
+
+
 async def _continue_application_access_flow(
     message: Message,
     state: FSMContext,
@@ -1366,6 +1391,280 @@ async def create_dispatcher(
         await message.answer("✅ Спасибо! Доступ открыт.")
         await _show_public_menu(message, content_loader)
 
+    @router.message(InfluencerStartFlow.waiting_choice)
+    async def influencer_start_choice(message: Message, state: FSMContext) -> None:
+        if not message.from_user:
+            return
+        text = (message.text or "").strip()
+        if text == BTN_INFLUENCER_ALREADY:
+            await db.upsert_access_request(
+                telegram_id=message.from_user.id,
+                username=message.from_user.username,
+                first_name=message.from_user.first_name,
+                role=ROLE_INFLUENCER,
+                subcategory=None,
+                access_code="NO_CODE_INFLUENCER",
+                full_name=message.from_user.full_name or message.from_user.first_name,
+                phone=None,
+                email=None,
+                company=None,
+                inn=None,
+                consent_accepted=False,
+                referred_by=None,
+            )
+            await db.approve_user(telegram_id=message.from_user.id, approved_by=0)
+            await state.clear()
+            await message.answer(
+                "Отлично!\n"
+                "Здесь вы найдёте всю информацию по сотрудничеству со СТАММИТ’26: "
+                "материалы, дедлайны, форматы публикаций и связь с командой.",
+            )
+            await _show_private_menu(message, db, settings, content_loader, include_public_menu=include_public_menu)
+            return
+        if text == BTN_INFLUENCER_APPLY:
+            await state.set_state(InfluencerApplicationFlow.waiting_full_name)
+            await state.set_data({"infl": {}})
+            await message.answer(
+                "Отлично!\nОтветьте на несколько вопросов, чтобы команда проекта могла рассмотреть вашу заявку на сотрудничество.",
+            )
+            await message.answer("👤 Укажите ваше ФИО:", reply_markup=cancel_keyboard())
+            return
+        await message.answer("Пожалуйста, выберите вариант кнопкой.", reply_markup=influencer_start_keyboard())
+
+    async def _infl_update(state: FSMContext, key: str, value: str) -> None:
+        data = await state.get_data()
+        infl = dict(data.get("infl") or {})
+        infl[key] = value
+        await state.update_data(infl=infl)
+
+    @router.message(InfluencerApplicationFlow.waiting_full_name)
+    async def infl_full_name(message: Message, state: FSMContext) -> None:
+        name = (message.text or "").strip()
+        if len(name) < 2:
+            await message.answer("⚠️ Введите корректное ФИО.")
+            return
+        await _infl_update(state, "full_name", name)
+        await state.set_state(InfluencerApplicationFlow.waiting_phone)
+        await message.answer("📞 Укажите номер телефона для связи:", reply_markup=contact_request_keyboard())
+
+    @router.message(InfluencerApplicationFlow.waiting_phone)
+    async def infl_phone(message: Message, state: FSMContext) -> None:
+        phone = (message.contact.phone_number or "").strip() if message.contact else (message.text or "").strip()
+        if not PHONE_RE.match(phone):
+            await message.answer("⚠️ Неверный формат телефона. Пример: +79991234567.", reply_markup=contact_request_keyboard())
+            return
+        await _infl_update(state, "phone", phone)
+        await state.set_state(InfluencerApplicationFlow.waiting_email)
+        await message.answer("✉️ Укажите email для связи:", reply_markup=cancel_keyboard())
+
+    @router.message(InfluencerApplicationFlow.waiting_email)
+    async def infl_email(message: Message, state: FSMContext) -> None:
+        email = (message.text or "").strip()
+        if not EMAIL_RE.match(email):
+            await message.answer("⚠️ Укажите корректный email.")
+            return
+        await _infl_update(state, "email", email)
+        await state.set_state(InfluencerApplicationFlow.waiting_social)
+        await message.answer("🔗 Пришлите ссылку на ваш основной аккаунт:", reply_markup=cancel_keyboard())
+
+    @router.message(InfluencerApplicationFlow.waiting_social)
+    async def infl_social(message: Message, state: FSMContext) -> None:
+        link = (message.text or "").strip()
+        if len(link) < 3:
+            await message.answer("⚠️ Отправьте ссылку или имя аккаунта.")
+            return
+        await _infl_update(state, "social", link)
+        await state.set_state(InfluencerApplicationFlow.waiting_platforms)
+        await message.answer(
+            "📲 На каких площадках вы ведёте блог?",
+            reply_markup=options_keyboard(INFL_PLATFORMS),
+        )
+
+    @router.message(InfluencerApplicationFlow.waiting_platforms)
+    async def infl_platforms(message: Message, state: FSMContext) -> None:
+        value = (message.text or "").strip()
+        if not value:
+            return
+        await _infl_update(state, "platforms", value)
+        await state.set_state(InfluencerApplicationFlow.waiting_topic)
+        await message.answer("📌 Укажите основную тематику вашего блога:", reply_markup=options_keyboard(INFL_TOPICS))
+
+    @router.message(InfluencerApplicationFlow.waiting_topic)
+    async def infl_topic(message: Message, state: FSMContext) -> None:
+        value = (message.text or "").strip()
+        if not value:
+            return
+        await _infl_update(state, "topic", value)
+        await state.set_state(InfluencerApplicationFlow.waiting_audience)
+        await message.answer("👥 Укажите вашу аудиторию / количество подписчиков:", reply_markup=cancel_keyboard())
+
+    @router.message(InfluencerApplicationFlow.waiting_audience)
+    async def infl_audience(message: Message, state: FSMContext) -> None:
+        value = (message.text or "").strip()
+        if not value:
+            return
+        await _infl_update(state, "audience", value)
+        await state.set_state(InfluencerApplicationFlow.waiting_geo)
+        await message.answer("🌍 Укажите основную географию вашей аудитории:", reply_markup=cancel_keyboard())
+
+    @router.message(InfluencerApplicationFlow.waiting_geo)
+    async def infl_geo(message: Message, state: FSMContext) -> None:
+        value = (message.text or "").strip()
+        if not value:
+            return
+        await _infl_update(state, "geo", value)
+        await state.set_state(InfluencerApplicationFlow.waiting_collab)
+        await message.answer(
+            "🤝 Какой формат сотрудничества вам интересен?",
+            reply_markup=options_keyboard(INFL_COLLAB),
+        )
+
+    @router.message(InfluencerApplicationFlow.waiting_collab)
+    async def infl_collab(message: Message, state: FSMContext) -> None:
+        value = (message.text or "").strip()
+        if not value:
+            return
+        await _infl_update(state, "collab", value)
+        await state.set_state(InfluencerApplicationFlow.waiting_formats)
+        await message.answer(
+            "🎬 Какие форматы вы готовы рассмотреть?",
+            reply_markup=options_keyboard(INFL_FORMATS),
+        )
+
+    @router.message(InfluencerApplicationFlow.waiting_formats)
+    async def infl_formats(message: Message, state: FSMContext) -> None:
+        value = (message.text or "").strip()
+        if not value:
+            return
+        await _infl_update(state, "formats", value)
+        await state.set_state(InfluencerApplicationFlow.waiting_terms)
+        await message.answer(
+            "💬 Укажите ваши условия сотрудничества или стоимость размещения:\n"
+            "Если готовы обсудить индивидуально — напишите «обсудим».",
+            reply_markup=cancel_keyboard(),
+        )
+
+    @router.message(InfluencerApplicationFlow.waiting_terms)
+    async def infl_terms(message: Message, state: FSMContext) -> None:
+        value = (message.text or "").strip()
+        if not value:
+            return
+        await _infl_update(state, "terms", value)
+        await state.set_state(InfluencerApplicationFlow.waiting_experience)
+        await message.answer(
+            "📎 Были ли у вас интеграции с медицинскими, образовательными или бизнес-проектами?\n"
+            "Можете прикрепить примеры или ссылки. Если нет — отправьте «нет» или нажмите «Пропустить».",
+            reply_markup=options_keyboard([], add_skip=True),
+        )
+
+    @router.message(InfluencerApplicationFlow.waiting_experience)
+    async def infl_experience(message: Message, state: FSMContext) -> None:
+        value = (message.text or "").strip()
+        if value == BTN_INFL_SKIP:
+            value = ""
+        await _infl_update(state, "experience", value)
+        await state.set_state(InfluencerApplicationFlow.waiting_comment)
+        await message.answer(
+            "✍️ Если хотите, добавьте комментарий для команды проекта. Или нажмите «Пропустить».",
+            reply_markup=options_keyboard([], add_skip=True),
+        )
+
+    @router.message(InfluencerApplicationFlow.waiting_comment)
+    async def infl_comment(message: Message, state: FSMContext) -> None:
+        value = (message.text or "").strip()
+        if value == BTN_INFL_SKIP:
+            value = ""
+        await _infl_update(state, "comment", value)
+        await state.set_state(InfluencerApplicationFlow.waiting_consent)
+        await message.answer(
+            "Для отправки заявки нужно согласие на обработку персональных данных.",
+            reply_markup=consent_keyboard(),
+        )
+
+    @router.message(InfluencerApplicationFlow.waiting_consent)
+    async def infl_consent(message: Message, state: FSMContext) -> None:
+        if not message.from_user:
+            return
+        if (message.text or "").strip() != BTN_CONSENT_ACCEPT:
+            await message.answer("Нажмите «✅ Согласен», чтобы отправить заявку.", reply_markup=consent_keyboard())
+            return
+        data = await state.get_data()
+        infl = dict(data.get("infl") or {})
+        labels = [
+            ("ФИО", "full_name"),
+            ("Телефон", "phone"),
+            ("Email", "email"),
+            ("Соцсети", "social"),
+            ("Площадки", "platforms"),
+            ("Тематика", "topic"),
+            ("Аудитория", "audience"),
+            ("География", "geo"),
+            ("Формат сотрудничества", "collab"),
+            ("Форматы публикаций", "formats"),
+            ("Условия", "terms"),
+            ("Опыт", "experience"),
+            ("Комментарий", "comment"),
+        ]
+        summary = "Заявка инфлюенсера\n" + "\n".join(
+            f"{label}: {infl.get(key) or '—'}" for label, key in labels
+        )
+
+        await db.upsert_access_request(
+            telegram_id=message.from_user.id,
+            username=message.from_user.username,
+            first_name=message.from_user.first_name,
+            role=ROLE_INFLUENCER,
+            subcategory=None,
+            access_code="NO_CODE_INFLUENCER",
+            full_name=infl.get("full_name"),
+            phone=infl.get("phone"),
+            email=infl.get("email"),
+            company=None,
+            inn=None,
+            consent_accepted=True,
+            referred_by=None,
+        )
+        await db.approve_user(telegram_id=message.from_user.id, approved_by=0)
+
+        token = f"infl{message.from_user.id}{int(datetime.now(timezone.utc).timestamp())}"
+        application = await db.create_application(
+            token=token,
+            role=ROLE_INFLUENCER,
+            source="no_code",
+            request_text=summary,
+            booth_number=None,
+            full_name=infl.get("full_name"),
+            phone=infl.get("phone"),
+            email=infl.get("email"),
+            company=None,
+            inn=None,
+            telegram_id=message.from_user.id,
+            status=APPLICATION_STATUS_IN_PROGRESS,
+        )
+        await _notify_application(
+            bot=message.bot,
+            settings=settings,
+            application_id=int(application["id"]),
+            user_id=message.from_user.id,
+            source="no_code",
+            role=ROLE_INFLUENCER,
+            request_text=summary,
+            booth_number=None,
+            full_name=infl.get("full_name"),
+            phone=infl.get("phone"),
+            email=infl.get("email"),
+            company=None,
+            inn=None,
+        )
+
+        await state.clear()
+        await message.answer(
+            "Спасибо!\n"
+            "Ваша заявка на сотрудничество со СТАММИТ’26 принята.\n\n"
+            "Команда проекта рассмотрит ваш профиль и свяжется с вами по указанным контактам.",
+        )
+        await _show_private_menu(message, db, settings, content_loader, include_public_menu=include_public_menu)
+
     @router.message(ApplicationLinkFlow.waiting_start)
     async def handle_application_start_click(message: Message, state: FSMContext) -> None:
         if not message.from_user:
@@ -1417,6 +1716,8 @@ async def create_dispatcher(
             user_row = await db.get_user(message.from_user.id)
             if _is_access_granted(user_row):
                 await _show_private_menu(message, db, settings, content_loader, include_public_menu=include_public_menu)
+            elif profile_role == ROLE_INFLUENCER:
+                await _show_influencer_start(message, state)
             else:
                 await _start_no_code_registration(message, state, profile_role)
 
@@ -1559,6 +1860,9 @@ async def create_dispatcher(
             return
 
         if profile_role:
+            if profile_role == ROLE_INFLUENCER:
+                await _show_influencer_start(message, state)
+                return
             await _start_no_code_registration(message, state, profile_role)
             return
 

@@ -59,3 +59,43 @@ class ApplicationLinkFlow(StatesGroup):
 
 class PublicContactFlow(StatesGroup):
     waiting_contact = State()
+
+
+class ExpertStartFlow(StatesGroup):
+    waiting_choice = State()
+
+
+class ExpertApplicationFlow(StatesGroup):
+    waiting_full_name = State()
+    waiting_phone = State()
+    waiting_email = State()
+    waiting_company = State()
+    waiting_format = State()
+    waiting_format_other = State()
+    waiting_topic = State()
+    waiting_description = State()
+    waiting_audience = State()
+    waiting_experience = State()
+    waiting_links = State()
+    waiting_consent = State()
+
+
+class InfluencerStartFlow(StatesGroup):
+    waiting_choice = State()
+
+
+class InfluencerApplicationFlow(StatesGroup):
+    waiting_full_name = State()
+    waiting_phone = State()
+    waiting_email = State()
+    waiting_social = State()
+    waiting_platforms = State()
+    waiting_topic = State()
+    waiting_audience = State()
+    waiting_geo = State()
+    waiting_collab = State()
+    waiting_formats = State()
+    waiting_terms = State()
+    waiting_experience = State()
+    waiting_comment = State()
+    waiting_consent = State()

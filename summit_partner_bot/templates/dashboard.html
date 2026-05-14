@@ -726,49 +726,6 @@
       </section>
     {% endif %}
 
-    {% if active_tab == 'system' %}
-      <section>
-        <h2>Администраторы Telegram</h2>
-        <form method="post" action="/admins/add" class="row">
-          <input type="hidden" name="tab" value="{{ active_tab }}">
-          <input class="c4" name="telegram_id" placeholder="Telegram ID" required>
-          <input class="c6" name="note" placeholder="Примечание">
-          <button class="c2" type="submit">Добавить</button>
-        </form>
-        <div class="managers-grid">
-          {% for env_id in env_admin_ids %}
-            <div class="manager-card manager-env">
-              <div class="manager-head">
-                <div class="manager-name">Администратор</div>
-                <span class="manager-tag manager-tag-env">из .env</span>
-              </div>
-              <div class="manager-id">ID: <b>{{ env_id }}</b></div>
-              <div class="muted">Удаляется только редактированием переменной окружения.</div>
-            </div>
-          {% endfor %}
-          {% for admin in admin_users %}
-            <div class="manager-card">
-              <div class="manager-head">
-                <div class="manager-name">{{ admin.note or 'Менеджер' }}</div>
-                <span class="manager-tag manager-tag-db">из админки</span>
-              </div>
-              <div class="manager-id">ID: <b>{{ admin.telegram_id }}</b></div>
-              <div class="muted">Добавлен: {{ admin.created_at }}</div>
-              <form method="post" action="/admins/delete" class="manager-actions">
-                <input type="hidden" name="tab" value="{{ active_tab }}">
-                <input type="hidden" name="telegram_id" value="{{ admin.telegram_id }}">
-                <button class="danger" type="submit" onclick="return confirm('Удалить менеджера {{ admin.telegram_id }}?');">Удалить</button>
-              </form>
-            </div>
-          {% endfor %}
-          {% if not env_admin_ids and not admin_users %}
-            <div class="muted">Менеджеров пока нет — добавьте первого через форму выше.</div>
-          {% endif %}
-        </div>
-      </section>
-    {% endif %}
-    {% endif %}
-
     {% if active_tab == 'applications' %}
       <section>
         <h2>Заявки и бронирование стендов</h2>
