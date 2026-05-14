@@ -830,7 +830,7 @@ async def _start_no_code_registration(message: Message, state: FSMContext, role:
         }
     )
     await message.answer(
-        "📝 Подайте заявку без кода.\n"
+        "📝 Подайте заявку\n"
         "Сначала поделитесь контактом кнопкой ниже или отправьте номер телефона текстом.",
         reply_markup=contact_request_keyboard(),
     )
