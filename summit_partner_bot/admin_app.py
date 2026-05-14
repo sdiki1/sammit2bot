@@ -394,7 +394,6 @@ def create_app() -> FastAPI:
         stats = await db.get_stats()
         users = await db.list_users(limit=300)
         pending_users = await db.list_pending_users(limit=200)
-        all_codes = await db.list_access_codes(limit=300)
         subcategories = await db.list_subcategories()
         broadcasts = await db.list_broadcasts(limit=120)
         feedback_items = await db.list_feedback(limit=120)
@@ -423,13 +422,6 @@ def create_app() -> FastAPI:
         if active_tab == TAB_SYSTEM:
             visible_sections = sections
 
-        role_for_tab = TAB_ROLE.get(active_tab)
-        if role_for_tab:
-            codes = [row for row in all_codes if str(row["role"]) == role_for_tab]
-        elif active_tab == TAB_PUBLIC:
-            codes = []
-        else:
-            codes = all_codes
         subcategories_by_role: dict[str, list[Any]] = {role: [] for role in [ROLE_PARTNER, ROLE_EXPERT, ROLE_INFLUENCER]}
         for row in subcategories:
             subcategories_by_role.setdefault(str(row["role"]), []).append(row)
@@ -442,8 +434,6 @@ def create_app() -> FastAPI:
                 "stats": stats,
                 "users": users,
                 "pending_users": pending_users,
-                "codes": codes,
-                "all_codes": all_codes,
                 "subcategories": subcategories,
                 "subcategories_by_role": subcategories_by_role,
                 "broadcasts": broadcasts,
@@ -666,28 +656,6 @@ def create_app() -> FastAPI:
 
         return _redirect(f"/chats/{telegram_id}")
 
-    @app.post("/codes/add")
-    async def add_code(
-        request: Request,
-        code: str = Form(...),
-        role: str = Form(ROLE_PARTNER),
-        subcategory: str = Form(""),
-        description: str = Form(""),
-        tab: str = Form(TAB_PUBLIC),
-    ) -> RedirectResponse:
-        maybe_redirect = _require_auth(request)
-        if maybe_redirect is not None:
-            return maybe_redirect
-        await db.add_or_update_access_code(
-            code=code,
-            role=normalize_role(role),
-            subcategory=normalize_subcategory(subcategory),
-            description=description,
-            is_active=True,
-        )
-        _set_flash(request, "Код сохранён.")
-        return _redirect(_dashboard_url(_sanitize_tab(tab)))
-
     @app.post("/admins/add")
     async def add_admin_user(
         request: Request,
@@ -746,36 +714,6 @@ def create_app() -> FastAPI:
             return maybe_redirect
         deleted = await db.delete_subcategory(role=normalize_role(role), name=name)
         _set_flash(request, "Подкатегория удалена." if deleted else "Подкатегория не найдена.")
-        return _redirect(_dashboard_url(_sanitize_tab(tab)))
-
-    @app.post("/codes/status")
-    async def set_code_status(
-        request: Request,
-        code: str = Form(...),
-        is_active: str = Form(...),
-        tab: str = Form(TAB_PUBLIC),
-    ) -> RedirectResponse:
-        maybe_redirect = _require_auth(request)
-        if maybe_redirect is not None:
-            return maybe_redirect
-        await db.set_access_code_status(code=code, is_active=(is_active == "1"))
-        _set_flash(request, "Статус кода обновлён.")
-        return _redirect(_dashboard_url(_sanitize_tab(tab)))
-
-    @app.post("/codes/delete")
-    async def delete_code(
-        request: Request,
-        code: str = Form(...),
-        tab: str = Form(TAB_PUBLIC),
-    ) -> RedirectResponse:
-        maybe_redirect = _require_auth(request)
-        if maybe_redirect is not None:
-            return maybe_redirect
-        deleted = await db.delete_access_code(code=code)
-        if deleted:
-            _set_flash(request, "Код удалён.")
-        else:
-            _set_flash(request, "Код не найден.")
         return _redirect(_dashboard_url(_sanitize_tab(tab)))
 
     @app.post("/users/approve")
