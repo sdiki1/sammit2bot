@@ -303,6 +303,81 @@
     }
     .chip-x:hover { background: #b42318; color: #fff; border-color: #b42318; }
 
+    /* Карточки заявок */
+    .apps-grid {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 12px;
+      margin-top: 10px;
+    }
+    .app-card {
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: #fff;
+      padding: 12px 14px;
+      display: grid;
+      gap: 10px;
+      box-shadow: 0 1px 2px rgba(20, 40, 80, 0.04);
+    }
+    .app-card-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+    .app-card-title { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-weight: 700; }
+    .app-id { color: var(--muted); font-size: 13px; }
+    .app-card-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+      gap: 4px 16px;
+      font-size: 13px;
+    }
+    .app-card-grid b { color: var(--text); }
+    .app-questionnaire { border-top: 1px dashed var(--line); padding-top: 8px; }
+    .app-questionnaire summary {
+      cursor: pointer;
+      font-weight: 700;
+      font-size: 13px;
+      padding: 4px 0;
+      color: var(--accent);
+    }
+    .app-questionnaire pre {
+      margin: 6px 0 0;
+      padding: 10px 12px;
+      background: #f4f7fc;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      font-family: inherit;
+      font-size: 13px;
+      white-space: pre-wrap;
+      word-wrap: break-word;
+      line-height: 1.4;
+    }
+    .app-card-actions {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      border-top: 1px solid var(--line);
+      padding-top: 8px;
+    }
+    .app-card-actions select { flex: 1; max-width: 240px; }
+
+    .bot-badge {
+      display: inline-block;
+      font-size: 11px;
+      font-weight: 700;
+      padding: 3px 10px;
+      border-radius: 999px;
+      letter-spacing: 0.2px;
+      border: 1px solid var(--line);
+      background: #fff;
+    }
+    .bot-partner    { background: #dbeafe; color: #1256c9; border-color: #93c5fd; }
+    .bot-expert     { background: #fef9c3; color: #92400e; border-color: #fde047; }
+    .bot-influencer { background: #fce7f3; color: #9d174d; border-color: #f9a8d4; }
+
     /* Карточки менеджеров */
     .managers-grid {
       display: grid;
@@ -762,38 +837,51 @@
       <section>
         <h2>Заявки и бронирование стендов</h2>
         {% if applications %}
-          <table>
-            <thead>
-              <tr><th>ID</th><th>Источник</th><th>Статус</th><th>Telegram</th><th>Стенд</th><th>Компания</th><th>Контакт</th><th>Телефон</th><th>Email</th><th>Действие</th></tr>
-            </thead>
-            <tbody>
-              {% for a in applications %}
-                <tr>
-                  <td>{{ a.id }}</td>
-                  <td>{{ source_label(a.source) }}</td>
-                  <td>{{ app_status_badge(a.status) }}</td>
-                  <td>{{ a.telegram_id or '-' }}</td>
-                  <td>{{ a.booth_number or '-' }}</td>
-                  <td>{{ a.company or '-' }}{% if a.inn %}<br><span class="muted">ИНН {{ a.inn }}</span>{% endif %}</td>
-                  <td>{{ a.full_name or '-' }}</td>
-                  <td>{{ a.phone or '-' }}</td>
-                  <td>{{ a.email or '-' }}</td>
-                  <td>
-                    <form method="post" action="/applications/status" class="row">
-                      <input type="hidden" name="tab" value="{{ active_tab }}">
-                      <input type="hidden" name="application_id" value="{{ a.id }}">
-                      <select class="c12" name="status">
-                        {% for status, label in application_status_labels %}
-                          <option value="{{ status }}" {% if status == a.status %}selected{% endif %}>{{ label }}</option>
-                        {% endfor %}
-                      </select>
-                      <button class="c12" type="submit">Сохранить</button>
-                    </form>
-                  </td>
-                </tr>
-              {% endfor %}
-            </tbody>
-          </table>
+          {% macro bot_label(role) %}
+            {% if role == 'partner' %}<span class="bot-badge bot-partner">🤝 Партнёр-бот</span>
+            {% elif role == 'expert' %}<span class="bot-badge bot-expert">🎓 Эксперт-бот</span>
+            {% elif role == 'influencer' %}<span class="bot-badge bot-influencer">📣 Инфлюенсер-бот</span>
+            {% else %}<span class="bot-badge">{{ role }}</span>{% endif %}
+          {% endmacro %}
+          <div class="apps-grid">
+            {% for a in applications %}
+              <div class="app-card">
+                <div class="app-card-head">
+                  <div class="app-card-title">
+                    <span class="app-id">#{{ a.id }}</span>
+                    {{ bot_label(a.role) }}
+                    <span class="muted">· {{ source_label(a.source) }}</span>
+                  </div>
+                  <div>{{ app_status_badge(a.status) }}</div>
+                </div>
+                <div class="app-card-grid">
+                  <div><b>Контакт:</b> {{ a.full_name or '—' }}</div>
+                  <div><b>Telegram:</b> {{ a.telegram_id or '—' }}</div>
+                  <div><b>Телефон:</b> {{ a.phone or '—' }}</div>
+                  <div><b>Email:</b> {{ a.email or '—' }}</div>
+                  <div><b>Компания:</b> {{ a.company or '—' }}{% if a.inn %} <span class="muted">(ИНН {{ a.inn }})</span>{% endif %}</div>
+                  {% if a.booth_number %}<div><b>Стенд:</b> {{ a.booth_number }}</div>{% endif %}
+                  {% if a.created_at %}<div><b>Создана:</b> <span class="muted">{{ a.created_at.strftime('%d.%m.%Y %H:%M') if a.created_at.strftime is defined else a.created_at }}</span></div>{% endif %}
+                </div>
+                {% if a.request_text %}
+                  <details class="app-questionnaire">
+                    <summary>📋 Полная анкета</summary>
+                    <pre>{{ a.request_text }}</pre>
+                  </details>
+                {% endif %}
+                <form method="post" action="/applications/status" class="app-card-actions">
+                  <input type="hidden" name="tab" value="{{ active_tab }}">
+                  <input type="hidden" name="application_id" value="{{ a.id }}">
+                  <select name="status">
+                    {% for status, label in application_status_labels %}
+                      <option value="{{ status }}" {% if status == a.status %}selected{% endif %}>{{ label }}</option>
+                    {% endfor %}
+                  </select>
+                  <button type="submit">Сохранить статус</button>
+                </form>
+              </div>
+            {% endfor %}
+          </div>
         {% else %}
           <div class="muted">Заявок пока нет.</div>
         {% endif %}
