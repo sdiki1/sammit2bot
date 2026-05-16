@@ -555,6 +555,7 @@ async def _notify_access_request(
     inn: str | None,
     code: str,
     consent_accepted: bool = False,
+    db: Database | None = None,
 ) -> None:
     lines = [
         "🆕 Новая заявка на доступ",
@@ -574,7 +575,13 @@ async def _notify_access_request(
     ]
     text = "\n".join(lines)
 
-    targets = set(settings.admin_ids) | (await _effective_support_chat_ids(db, settings))
+    support_ids: set[int] = set(settings.support_chat_ids)
+    if db is not None:
+        try:
+            support_ids = await _effective_support_chat_ids(db, settings)
+        except Exception:  # noqa: BLE001
+            logger.exception("Failed to resolve effective support chat ids")
+    targets = set(settings.admin_ids) | support_ids
     for chat_id in targets:
         try:
             await bot.send_message(chat_id=chat_id, text=text)
@@ -596,6 +603,7 @@ async def _notify_application(
     email: str | None,
     company: str | None,
     inn: str | None,
+    db: Database | None = None,
 ) -> None:
     lines = [
         "🆕 Новая заявка / бронь стенда",
@@ -614,7 +622,13 @@ async def _notify_application(
     ]
     text = "\n".join(lines)
 
-    targets = set(settings.admin_ids) | (await _effective_support_chat_ids(db, settings))
+    support_ids: set[int] = set(settings.support_chat_ids)
+    if db is not None:
+        try:
+            support_ids = await _effective_support_chat_ids(db, settings)
+        except Exception:  # noqa: BLE001
+            logger.exception("Failed to resolve effective support chat ids")
+    targets = set(settings.admin_ids) | support_ids
     for chat_id in targets:
         try:
             await bot.send_message(chat_id=chat_id, text=text)
@@ -754,6 +768,7 @@ async def _complete_request(
             inn=inn,
             code=code,
             consent_accepted=consent_accepted,
+            db=db,
         )
 
     if application_source:
@@ -795,6 +810,7 @@ async def _complete_request(
             email=email,
             company=company,
             inn=inn,
+            db=db,
         )
 
     content = await content_loader.load()
@@ -1660,6 +1676,7 @@ async def create_dispatcher(
             email=infl.get("email"),
             company=None,
             inn=None,
+            db=db,
         )
 
         await state.clear()
@@ -1918,6 +1935,7 @@ async def create_dispatcher(
             email=exp.get("email"),
             company=exp.get("company"),
             inn=None,
+            db=db,
         )
 
         await state.clear()
@@ -2959,6 +2977,7 @@ async def create_dispatcher(
             email=email,
             company=str(data.get("booking_company", "")),
             inn=str(data.get("booking_inn", "")),
+            db=db,
         )
         await state.clear()
         reply_kb = public_menu_keyboard() if include_public_menu else private_keyboard(ROLE_PARTNER)
