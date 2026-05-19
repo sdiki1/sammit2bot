@@ -1436,6 +1436,277 @@ async def create_dispatcher(
         await message.answer("✅ Спасибо! Доступ открыт.")
         await _show_public_menu(message, content_loader)
 
+    PARTNER_FINAL_MESSAGE = (
+        "Спасибо!\n"
+        "Ваша заявка на выбранное место принята.\n\n"
+        "За вашей компанией предварительно зафиксировано выбранное место на интерактивной карте экспо-зоны.\n\n"
+        "Срок рассмотрения заявки — до 1 недели.\n\n"
+        "Мы тщательно формируем экспо-зону СТАММИТ’26 по направлениям, категориям компаний и логике движения участников. "
+        "В связи с высоким спросом на размещение каждая заявка проходит индивидуальное рассмотрение.\n\n"
+        "В течение этого срока с вами свяжется менеджер проекта:\n"
+        "— подтвердит возможность закрепления выбранного места;\n"
+        "— согласует детали участия;\n"
+        "— либо предложит альтернативный вариант, если выбранное место уже недоступно или не соответствует структуре экспо-зоны."
+    )
+
+    @router.message(PartnerStartFlow.waiting_choice)
+    async def partner_start_choice(message: Message, state: FSMContext) -> None:
+        if not message.from_user:
+            return
+        text = (message.text or "").strip()
+        if text == BTN_PARTNER_ALREADY:
+            await db.upsert_access_request(
+                telegram_id=message.from_user.id,
+                username=message.from_user.username,
+                first_name=message.from_user.first_name,
+                role=ROLE_PARTNER,
+                subcategory=None,
+                access_code="NO_CODE_PARTNER",
+                full_name=message.from_user.full_name or message.from_user.first_name,
+                phone=None,
+                email=None,
+                company=None,
+                inn=None,
+                consent_accepted=False,
+                referred_by=None,
+            )
+            await db.approve_user(telegram_id=message.from_user.id, approved_by=0)
+            await state.clear()
+            await message.answer(
+                "Отлично!\n"
+                "Здесь вы найдёте всю информацию о партнёрских возможностях СТАММИТ’26: "
+                "материалы, дедлайны, формат участия и связь с командой проекта.",
+            )
+            await _show_private_menu(message, db, settings, content_loader, include_public_menu=include_public_menu)
+            return
+        if text == BTN_PARTNER_APPLY:
+            await state.set_state(PartnerStartFlow.waiting_apply_choice)
+            await message.answer(
+                "Отлично!\n"
+                "СТАММИТ’26 — масштабное событие для стоматологического сообщества, "
+                "которое объединяет врачей, владельцев клиник, управленцев, экспертов рынка и компании отрасли.\n\n"
+                "Если вы хотите рассмотреть участие в экспо-зоне, вы можете заранее посмотреть интерактивную карту, "
+                "выбрать интересующее место и затем вернуться в бот для подтверждения брони.\n"
+                "Или оставить заявку без места — менеджер поможет вам подобрать оптимальный вариант.",
+                reply_markup=partner_apply_keyboard(),
+            )
+            return
+        if text == BTN_PARTNER_CONFIRM_SITE:
+            await state.set_state(PartnerApplicationFlow.waiting_full_name)
+            await state.set_data({"partner": {"source": "site_confirm"}})
+            await message.answer(
+                "Вы выбрали место на интерактивной схеме экспо-зоны СТАММИТ’26.\n\n"
+                "Чтобы передать заявку команде и предварительно зафиксировать выбранное место, "
+                "заполните короткую форму. После этого менеджер проверит возможность размещения и свяжется с вами.",
+            )
+            await message.answer("👤 Укажите ваше ФИО:", reply_markup=cancel_keyboard())
+            return
+        await message.answer("Пожалуйста, выберите вариант кнопкой.", reply_markup=partner_start_keyboard())
+
+    @router.message(PartnerStartFlow.waiting_apply_choice)
+    async def partner_apply_choice(message: Message, state: FSMContext) -> None:
+        text = (message.text or "").strip()
+        if text == BTN_PARTNER_PICK_MAP:
+            await state.set_state(PartnerStartFlow.waiting_map_confirm)
+            await message.answer(
+                "Перейдите на сайт, выберите интересующее место на карте, оставьте заявку.\n\n"
+                "После выбора места вернитесь в бот и нажмите «Подтвердить бронирование».\n\n"
+                "Так менеджер сможет проверить выбранное место, предварительно зафиксировать его за вашей компанией и связаться с вами для подтверждения.",
+                reply_markup=url_keyboard([{"title": "🗺 Открыть карту экспо-зоны", "url": PARTNER_MAP_URL}]),
+            )
+            await message.answer(
+                "Когда выберете место — нажмите кнопку ниже:",
+                reply_markup=partner_confirm_booking_keyboard(),
+            )
+            return
+        if text == BTN_PARTNER_NO_PLACE:
+            await state.set_state(PartnerApplicationFlow.waiting_full_name)
+            await state.set_data({"partner": {"source": "no_place"}})
+            await message.answer(
+                "Ответьте на несколько вопросов, чтобы команда проекта могла рассмотреть вашу заявку и предложить подходящий формат участия.",
+            )
+            await message.answer("👤 Укажите ваше ФИО:", reply_markup=cancel_keyboard())
+            return
+        await message.answer("Пожалуйста, выберите вариант кнопкой.", reply_markup=partner_apply_keyboard())
+
+    @router.message(PartnerStartFlow.waiting_map_confirm)
+    async def partner_map_confirm(message: Message, state: FSMContext) -> None:
+        text = (message.text or "").strip()
+        if text == BTN_PARTNER_CONFIRM_BOOKING:
+            await state.set_state(PartnerApplicationFlow.waiting_full_name)
+            await state.set_data({"partner": {"source": "map_confirm"}})
+            await message.answer(
+                "Отлично!\n"
+                "Чтобы передать заявку команде и предварительно зафиксировать выбранное место, "
+                "заполните короткую форму. После этого менеджер проверит возможность размещения и свяжется с вами.",
+            )
+            await message.answer("👤 Укажите ваше ФИО:", reply_markup=cancel_keyboard())
+            return
+        await message.answer(
+            "Если выбрали место — нажмите «Подтвердить бронирование».",
+            reply_markup=partner_confirm_booking_keyboard(),
+        )
+
+    async def _partner_update(state: FSMContext, key: str, value: str) -> None:
+        data = await state.get_data()
+        p = dict(data.get("partner") or {})
+        p[key] = value
+        await state.update_data(partner=p)
+
+    @router.message(PartnerApplicationFlow.waiting_full_name)
+    async def partner_full_name(message: Message, state: FSMContext) -> None:
+        name = (message.text or "").strip()
+        if len(name) < 2:
+            await message.answer("⚠️ Введите корректное ФИО.")
+            return
+        await _partner_update(state, "full_name", name)
+        await state.set_state(PartnerApplicationFlow.waiting_phone)
+        await message.answer("📞 Укажите номер телефона для связи:", reply_markup=contact_request_keyboard())
+
+    @router.message(PartnerApplicationFlow.waiting_phone)
+    async def partner_phone(message: Message, state: FSMContext) -> None:
+        phone = (message.contact.phone_number or "").strip() if message.contact else (message.text or "").strip()
+        if not PHONE_RE.match(phone):
+            await message.answer("⚠️ Неверный формат телефона. Пример: +79991234567.", reply_markup=contact_request_keyboard())
+            return
+        await _partner_update(state, "phone", phone)
+        await state.set_state(PartnerApplicationFlow.waiting_email)
+        await message.answer("✉️ Укажите email для связи:", reply_markup=cancel_keyboard())
+
+    @router.message(PartnerApplicationFlow.waiting_email)
+    async def partner_email(message: Message, state: FSMContext) -> None:
+        email = (message.text or "").strip()
+        if not EMAIL_RE.match(email):
+            await message.answer("⚠️ Укажите корректный email.")
+            return
+        await _partner_update(state, "email", email)
+        await state.set_state(PartnerApplicationFlow.waiting_company)
+        await message.answer(
+            "🏢 Укажите компанию или проект:\nЕсли не применимо — отправьте «—».",
+            reply_markup=cancel_keyboard(),
+        )
+
+    @router.message(PartnerApplicationFlow.waiting_company)
+    async def partner_company(message: Message, state: FSMContext) -> None:
+        value = (message.text or "").strip()
+        if value in ("—", "-"):
+            value = ""
+        await _partner_update(state, "company", value)
+        await state.set_state(PartnerApplicationFlow.waiting_inn)
+        await message.answer(
+            "🏢 Укажите ИНН компании (10 или 12 цифр) или отправьте «—», если ИНН нет:",
+            reply_markup=cancel_keyboard(),
+        )
+
+    @router.message(PartnerApplicationFlow.waiting_inn)
+    async def partner_inn(message: Message, state: FSMContext) -> None:
+        inn = (message.text or "").strip()
+        if inn in ("—", "-"):
+            inn = ""
+        elif inn and (not inn.isdigit() or len(inn) not in (10, 12)):
+            await message.answer("⚠️ ИНН должен содержать 10 или 12 цифр. Отправьте ИНН или «—».")
+            return
+        await _partner_update(state, "inn", inn)
+        await state.set_state(PartnerApplicationFlow.waiting_comment)
+        await message.answer(
+            "✍️ Если хотите, добавьте комментарий для команды или нажмите «⏭ Пропустить»:",
+            reply_markup=options_keyboard([], add_skip=True),
+        )
+
+    @router.message(PartnerApplicationFlow.waiting_comment)
+    async def partner_comment(message: Message, state: FSMContext) -> None:
+        value = (message.text or "").strip()
+        if value == BTN_INFL_SKIP:
+            value = ""
+        await _partner_update(state, "comment", value)
+        await state.set_state(PartnerApplicationFlow.waiting_consent)
+        await message.answer(
+            "Для отправки заявки нужно согласие на обработку персональных данных.",
+            reply_markup=consent_keyboard(),
+        )
+
+    @router.message(PartnerApplicationFlow.waiting_consent)
+    async def partner_consent(message: Message, state: FSMContext) -> None:
+        if not message.from_user:
+            return
+        if (message.text or "").strip() != BTN_CONSENT_ACCEPT:
+            await message.answer("Нажмите «✅ Согласен», чтобы отправить заявку.", reply_markup=consent_keyboard())
+            return
+        data = await state.get_data()
+        p = dict(data.get("partner") or {})
+        source = str(p.get("source") or "no_place")
+
+        labels = [
+            ("ФИО", "full_name"),
+            ("Телефон", "phone"),
+            ("Email", "email"),
+            ("Компания", "company"),
+            ("ИНН", "inn"),
+            ("Комментарий", "comment"),
+        ]
+        source_labels = {
+            "site_confirm": "Подтверждение брони с сайта",
+            "map_confirm": "Бронь через карту в боте",
+            "no_place": "Заявка без выбора места",
+        }
+        summary = (
+            f"Заявка партнёра — {source_labels.get(source, source)}\n"
+            + "\n".join(f"{label}: {p.get(key) or '—'}" for label, key in labels)
+        )
+
+        await db.upsert_access_request(
+            telegram_id=message.from_user.id,
+            username=message.from_user.username,
+            first_name=message.from_user.first_name,
+            role=ROLE_PARTNER,
+            subcategory=None,
+            access_code="NO_CODE_PARTNER",
+            full_name=p.get("full_name"),
+            phone=p.get("phone"),
+            email=p.get("email"),
+            company=p.get("company"),
+            inn=p.get("inn"),
+            consent_accepted=True,
+            referred_by=None,
+        )
+        await db.approve_user(telegram_id=message.from_user.id, approved_by=0)
+
+        token = f"prt{message.from_user.id}{int(datetime.now(timezone.utc).timestamp())}"
+        application = await db.create_application(
+            token=token,
+            role=ROLE_PARTNER,
+            source=source,
+            request_text=summary,
+            booth_number=None,
+            full_name=p.get("full_name"),
+            phone=p.get("phone"),
+            email=p.get("email"),
+            company=p.get("company"),
+            inn=p.get("inn"),
+            telegram_id=message.from_user.id,
+            status=APPLICATION_STATUS_IN_PROGRESS,
+        )
+        await _notify_application(
+            bot=message.bot,
+            settings=settings,
+            application_id=int(application["id"]),
+            user_id=message.from_user.id,
+            source=source,
+            role=ROLE_PARTNER,
+            request_text=summary,
+            booth_number=None,
+            full_name=p.get("full_name"),
+            phone=p.get("phone"),
+            email=p.get("email"),
+            company=p.get("company"),
+            inn=p.get("inn"),
+            db=db,
+        )
+
+        await state.clear()
+        await message.answer(PARTNER_FINAL_MESSAGE)
+        await _show_private_menu(message, db, settings, content_loader, include_public_menu=include_public_menu)
+
     @router.message(InfluencerStartFlow.waiting_choice)
     async def influencer_start_choice(message: Message, state: FSMContext) -> None:
         if not message.from_user:
