@@ -79,17 +79,16 @@ TAB_BOT_KEY = {
 }
 
 TAB_ORDER = [
-    TAB_PUBLIC,
-    TAB_PARTNERS,
-    TAB_EXPERTS,
-    TAB_INFLUENCERS,
     TAB_CHATS,
     TAB_APPLICATIONS,
     TAB_BROADCASTS,
     TAB_USERS,
     TAB_FEEDBACK,
     TAB_TEXTS,
-    TAB_SYSTEM,
+    TAB_PUBLIC,
+    TAB_PARTNERS,
+    TAB_EXPERTS,
+    TAB_INFLUENCERS,
 ]
 TAB_TITLES = {
     TAB_PUBLIC: "Публичное",
@@ -102,7 +101,6 @@ TAB_TITLES = {
     TAB_USERS: "Все пользователи",
     TAB_FEEDBACK: "Отзывы",
     TAB_TEXTS: "Скрипты",
-    TAB_SYSTEM: "Сервис",
 }
 
 APPLICATION_STATUSES = [
@@ -612,30 +610,19 @@ def create_app() -> FastAPI:
             else:
                 await bot.send_message(chat_id=telegram_id, text=text)
 
-            settings_map = await db.get_content_settings_map()
-            operator_raw = (settings_map.get("chat_operator_id") or "").strip()
-            operator_id: int | None = None
-            if operator_raw:
-                try:
-                    operator_id = int(operator_raw)
-                except ValueError:
-                    operator_id = None
-
             await db.log_support_message(
                 telegram_id=telegram_id,
                 direction="manager",
                 text=text or None,
                 media_type=sent_media_type,
                 file_id=sent_file_id,
-                manager_telegram_id=operator_id,
+                manager_telegram_id=None,
                 bot_key=chosen_key,
             )
             existing_session = await db.get_active_support_session(telegram_id)
             if existing_session is None:
                 effective_support = await _effective_support_chat_ids(db, settings)
-                if operator_id is not None:
-                    support_chat_id = operator_id
-                elif effective_support:
+                if effective_support:
                     support_chat_id = next(iter(effective_support))
                 elif settings.admin_ids:
                     support_chat_id = next(iter(settings.admin_ids))
@@ -644,7 +631,7 @@ def create_app() -> FastAPI:
                 await db.connect_support_session(
                     telegram_id=telegram_id,
                     support_chat_id=support_chat_id,
-                    manager_telegram_id=operator_id,
+                    manager_telegram_id=None,
                 )
             _set_flash(request, "✅ Сообщение отправлено пользователю.")
         except TelegramForbiddenError:
@@ -716,7 +703,7 @@ def create_app() -> FastAPI:
         request: Request,
         telegram_id: int = Form(...),
         subcategory: str = Form(""),
-        tab: str = Form(TAB_SYSTEM),
+        tab: str = Form(TAB_USERS),
     ) -> RedirectResponse:
         maybe_redirect = _require_auth(request)
         if maybe_redirect is not None:
@@ -840,7 +827,7 @@ def create_app() -> FastAPI:
         application_id: int = Form(...),
         status: str = Form(APPLICATION_STATUS_NEW),
         manager_note: str = Form(""),
-        tab: str = Form(TAB_SYSTEM),
+        tab: str = Form(TAB_USERS),
     ) -> RedirectResponse:
         maybe_redirect = _require_auth(request)
         if maybe_redirect is not None:
@@ -1039,37 +1026,6 @@ def create_app() -> FastAPI:
             _set_flash(request, f"ID {target} не найден.")
         return _redirect(_dashboard_url(TAB_CHATS))
 
-    @app.post("/chats/operator")
-    async def save_chat_operator(
-        request: Request,
-        chat_operator_id: str = Form(""),
-        chat_operator_name: str = Form(""),
-        tab: str = Form(TAB_CHATS),
-    ) -> RedirectResponse:
-        maybe_redirect = _require_auth(request)
-        if maybe_redirect is not None:
-            return maybe_redirect
-
-        raw_id = (chat_operator_id or "").strip()
-        if raw_id:
-            try:
-                int(raw_id)
-            except ValueError:
-                _set_flash(request, "Telegram ID оператора должен быть числом.")
-                return _redirect(_dashboard_url(_sanitize_tab(tab)))
-
-        await db.upsert_content_settings(
-            {
-                "chat_operator_id": raw_id,
-                "chat_operator_name": (chat_operator_name or "").strip(),
-            }
-        )
-        if raw_id:
-            _set_flash(request, f"Оператор переписки задан: {raw_id}.")
-        else:
-            _set_flash(request, "Оператор переписки сброшен.")
-        return _redirect(_dashboard_url(_sanitize_tab(tab)))
-
     @app.post("/consents/upload")
     async def upload_consent_document(
         request: Request,
@@ -1118,11 +1074,11 @@ def create_app() -> FastAPI:
             _set_flash(request, "ID рассылки должен быть числом.")
             return _redirect(_dashboard_url(_sanitize_tab(tab)))
 
-        deleted = await db.delete_broadcast(target_id, only_unsent=True)
+        deleted = await db.delete_broadcast(target_id, only_unsent=False)
         if deleted:
-            _set_flash(request, f"Рассылка #{target_id} удалена из очереди.")
+            _set_flash(request, f"Рассылка #{target_id} удалена.")
         else:
-            _set_flash(request, f"Рассылка #{target_id} не найдена или уже была отправлена.")
+            _set_flash(request, f"Рассылка #{target_id} не найдена.")
         return _redirect(_dashboard_url(_sanitize_tab(tab)))
 
     return app

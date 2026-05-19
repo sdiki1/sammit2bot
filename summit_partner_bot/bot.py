@@ -66,6 +66,13 @@ from summit_partner_bot.keyboards import (
     BTN_INFLUENCER_ALREADY,
     BTN_INFLUENCER_APPLY,
     BTN_INFL_SKIP,
+    BTN_PARTNER_ALREADY,
+    BTN_PARTNER_APPLY,
+    BTN_PARTNER_CONFIRM_SITE,
+    BTN_PARTNER_PICK_MAP,
+    BTN_PARTNER_NO_PLACE,
+    BTN_PARTNER_CONFIRM_BOOKING,
+    PARTNER_MAP_URL,
     EXPERT_AUDIENCES,
     EXPERT_EXPERIENCES,
     EXPERT_FORMATS,
@@ -100,6 +107,9 @@ from summit_partner_bot.keyboards import (
     contact_request_keyboard,
     expert_start_keyboard,
     influencer_start_keyboard,
+    partner_start_keyboard,
+    partner_apply_keyboard,
+    partner_confirm_booking_keyboard,
     options_keyboard,
     private_menu_keyboard,
     public_menu_keyboard,
@@ -117,6 +127,8 @@ from summit_partner_bot.states import (
     ConsentFlow,
     ExpertApplicationFlow,
     ExpertStartFlow,
+    PartnerApplicationFlow,
+    PartnerStartFlow,
     FeedbackFlow,
     InfluencerApplicationFlow,
     InfluencerStartFlow,
@@ -874,6 +886,18 @@ async def _show_influencer_start(message: Message, state: FSMContext) -> None:
 async def _show_expert_start(message: Message, state: FSMContext) -> None:
     await state.set_state(ExpertStartFlow.waiting_choice)
     await message.answer("Выберите действие:", reply_markup=expert_start_keyboard())
+
+
+async def _show_partner_start(message: Message, state: FSMContext) -> None:
+    await state.set_state(PartnerStartFlow.waiting_choice)
+    await message.answer(
+        "Здравствуйте!\n"
+        "Добро пожаловать в партнёрский Telegram-бот СТАММИТ’26.\n\n"
+        "Здесь вы можете получить информацию о партнёрских возможностях, "
+        "выбрать формат участия, подтвердить бронь места в экспо-зоне и связаться с командой проекта.\n\n"
+        "Выберите действие:",
+        reply_markup=partner_start_keyboard(),
+    )
 
 
 async def _continue_application_access_flow(
@@ -2114,6 +2138,9 @@ async def create_dispatcher(
             return
 
         if profile_role:
+            if profile_role == ROLE_PARTNER:
+                await _show_partner_start(message, state)
+                return
             if profile_role == ROLE_INFLUENCER:
                 await _show_influencer_start(message, state)
                 return
@@ -2142,6 +2169,9 @@ async def create_dispatcher(
                 content_loader,
                 include_public_menu=include_public_menu,
             )
+            return
+        if profile_role == ROLE_PARTNER:
+            await _show_partner_start(message, state)
             return
         if profile_role == ROLE_INFLUENCER:
             await _show_influencer_start(message, state)
@@ -2450,7 +2480,9 @@ async def create_dispatcher(
                 )
                 return
             # Не одобрен — отправляем сразу на регистрацию
-            if profile_role == ROLE_INFLUENCER:
+            if profile_role == ROLE_PARTNER:
+                await _show_partner_start(message, state)
+            elif profile_role == ROLE_INFLUENCER:
                 await _show_influencer_start(message, state)
             elif profile_role == ROLE_EXPERT:
                 await _show_expert_start(message, state)
@@ -2584,7 +2616,9 @@ async def create_dispatcher(
             if _is_access_granted(user_row):
                 await message.answer("🏠 Главное меню.", reply_markup=private_keyboard(str(user_row["role"])))
                 return
-            if profile_role == ROLE_INFLUENCER:
+            if profile_role == ROLE_PARTNER:
+                await _show_partner_start(message, state)
+            elif profile_role == ROLE_INFLUENCER:
                 await _show_influencer_start(message, state)
             elif profile_role == ROLE_EXPERT:
                 await _show_expert_start(message, state)
@@ -2687,6 +2721,8 @@ async def create_dispatcher(
         user_row = await db.get_user(message.from_user.id)
         if _is_access_granted(user_row):
             await message.answer("🏠 Главное меню.", reply_markup=private_keyboard(str(user_row["role"])))
+        elif profile_role == ROLE_PARTNER:
+            await _show_partner_start(message, state)
         elif profile_role == ROLE_INFLUENCER:
             await _show_influencer_start(message, state)
         elif profile_role == ROLE_EXPERT:
@@ -3027,17 +3063,8 @@ async def create_dispatcher(
 
         role = normalize_role(str(user_row["role"]))
 
-        content_settings = await db.get_content_settings_map()
-        operator_raw = (content_settings.get("chat_operator_id") or "").strip()
-        operator_id: int | None = None
-        if operator_raw:
-            try:
-                operator_id = int(operator_raw)
-            except ValueError:
-                operator_id = None
-
         _support_ids_now = await _effective_support_chat_ids(db, settings)
-        if operator_id is None and not _support_ids_now and not settings.admin_ids:
+        if not _support_ids_now and not settings.admin_ids:
             await message.answer(
                 await _msg("msg_support_unavailable"),
                 reply_markup=private_keyboard(role),
@@ -3046,16 +3073,14 @@ async def create_dispatcher(
 
         await state.clear()
 
-        if operator_id is not None:
-            primary_chat_id = operator_id
-        elif _support_ids_now:
+        if _support_ids_now:
             primary_chat_id = next(iter(_support_ids_now))
         else:
             primary_chat_id = next(iter(settings.admin_ids))
         await db.connect_support_session(
             telegram_id=message.from_user.id,
             support_chat_id=primary_chat_id,
-            manager_telegram_id=operator_id,
+            manager_telegram_id=None,
         )
 
         username = f"@{user_row['username']}" if user_row["username"] else "—"
@@ -3072,10 +3097,7 @@ async def create_dispatcher(
             f"Открыть в админ-панели: чат → /chats/{message.from_user.id}"
         )
 
-        if operator_id is not None:
-            targets = {operator_id}
-        else:
-            targets = set(settings.admin_ids) | (await _effective_support_chat_ids(db, settings))
+        targets = set(settings.admin_ids) | (await _effective_support_chat_ids(db, settings))
         for chat_id in targets:
             try:
                 await message.bot.send_message(chat_id=chat_id, text=notify_header)
@@ -4027,6 +4049,9 @@ async def create_dispatcher(
             )
             return
 
+        if profile_role == ROLE_PARTNER:
+            await _show_partner_start(message, state)
+            return
         if profile_role == ROLE_INFLUENCER:
             await _show_influencer_start(message, state)
             return

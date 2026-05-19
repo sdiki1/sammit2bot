@@ -61,6 +61,22 @@ class PublicContactFlow(StatesGroup):
     waiting_contact = State()
 
 
+class PartnerStartFlow(StatesGroup):
+    waiting_choice = State()
+    waiting_apply_choice = State()
+    waiting_map_confirm = State()
+
+
+class PartnerApplicationFlow(StatesGroup):
+    waiting_full_name = State()
+    waiting_phone = State()
+    waiting_email = State()
+    waiting_company = State()
+    waiting_inn = State()
+    waiting_comment = State()
+    waiting_consent = State()
+
+
 class ExpertStartFlow(StatesGroup):
     waiting_choice = State()
 

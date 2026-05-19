@@ -693,38 +693,6 @@
 
     {% if active_tab == 'chats' %}
       <section>
-        <h2>Оператор переписки</h2>
-        <p class="muted">Telegram ID человека, с которым по умолчанию ведутся все чаты с пользователями. Если задан — все уведомления о новых диалогах и сообщения из админ-панели приписываются ему, и только он может отвечать через бота.</p>
-        {% set current_operator = settings_map.get('chat_operator_id', '') %}
-        {% set admin_candidates = [] %}
-        {% for aid in env_admin_ids %}
-          {% set _ = admin_candidates.append({'id': aid|string, 'note': 'из .env'}) %}
-        {% endfor %}
-        {% for au in admin_users %}
-          {% set _ = admin_candidates.append({'id': au.telegram_id|string, 'note': au.note or 'админ'}) %}
-        {% endfor %}
-        <form method="post" action="/chats/operator" class="row">
-          <input type="hidden" name="tab" value="{{ active_tab }}">
-          <select class="c5" name="chat_operator_id">
-            <option value="">— не назначен —</option>
-            {% for c in admin_candidates %}
-              <option value="{{ c.id }}" {% if c.id == current_operator %}selected{% endif %}>{{ c.id }} · {{ c.note }}</option>
-            {% endfor %}
-          </select>
-          <input class="c4" name="chat_operator_name" value="{{ settings_map.get('chat_operator_name', '') }}" placeholder="Имя оператора (необязательно)">
-          <button class="c3" type="submit">Сохранить</button>
-        </form>
-        {% if not admin_candidates %}
-          <div class="muted">Сначала добавьте администратора в разделе «Сервис» или укажите ID в переменной .env.</div>
-        {% endif %}
-        {% if settings_map.get('chat_operator_id') %}
-          <div class="muted">Текущий оператор: <b>{{ settings_map.get('chat_operator_name') or '—' }}</b> (ID {{ settings_map.get('chat_operator_id') }})</div>
-        {% else %}
-          <div class="muted">Оператор не назначен — диалоги уходят всем администраторам.</div>
-        {% endif %}
-      </section>
-
-      <section>
         <h2>Получатели уведомлений поддержки</h2>
         <p class="muted">Кому уходят уведомления о новых диалогах с поддержкой (аналог переменной <code>SUPPORT_CHAT_IDS</code>). Если список пуст — используются значения из <code>.env</code>. Поддерживаются Telegram ID пользователей и групп (например, <code>-1001234567890</code>).</p>
         {% set current_support_raw = settings_map.get('support_chat_ids_override', '') %}
@@ -956,15 +924,11 @@
                   <td>{{ b.sent_at or '-' }}</td>
                   <td>{% if b.image_path or b.image_filename %}🖼 {% endif %}{{ (b.message_text or '')[:120] or '-' }}</td>
                   <td>
-                    {% if not b.sent_at and b.status == 'scheduled' %}
-                      <form method="post" action="/broadcasts/delete" class="row">
-                        <input type="hidden" name="tab" value="{{ active_tab }}">
-                        <input type="hidden" name="broadcast_id" value="{{ b.id }}">
-                        <button class="danger c12" type="submit">Удалить</button>
-                      </form>
-                    {% else %}
-                      <span class="muted">—</span>
-                    {% endif %}
+                    <form method="post" action="/broadcasts/delete" class="row">
+                      <input type="hidden" name="tab" value="{{ active_tab }}">
+                      <input type="hidden" name="broadcast_id" value="{{ b.id }}">
+                      <button class="danger c12" type="submit" onclick="return confirm('Удалить рассылку #{{ b.id }}?');">Удалить</button>
+                    </form>
                   </td>
                 </tr>
               {% endfor %}

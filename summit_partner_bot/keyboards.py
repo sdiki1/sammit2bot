@@ -65,6 +65,15 @@ BTN_INFLUENCER_ALREADY = "Я уже инфлюенсер проекта"
 BTN_INFLUENCER_APPLY = "Хочу стать инфлюенсером СТАММИТ’26"
 BTN_INFL_SKIP = "⏭ Пропустить"
 
+BTN_PARTNER_ALREADY = "Я уже партнёр проекта"
+BTN_PARTNER_APPLY = "Хочу стать партнёром СТАММИТ’26"
+BTN_PARTNER_CONFIRM_SITE = "Подтверждение брони с сайта"
+BTN_PARTNER_PICK_MAP = "Выбрать место на интерактивной карте экспо-зоны"
+BTN_PARTNER_NO_PLACE = "Оставить заявку без выбора места"
+BTN_PARTNER_CONFIRM_BOOKING = "Подтвердить бронирование"
+
+PARTNER_MAP_URL = "https://mss26.ru/partners"
+
 BTN_EXPERT_ALREADY = "Я уже спикер"
 BTN_EXPERT_APPLY = "Хочу оставить заявку на доклад"
 BTN_EXPERT_OTHER = "Другое"
@@ -175,6 +184,40 @@ def contact_request_keyboard() -> ReplyKeyboardMarkup:
         ],
         resize_keyboard=True,
         one_time_keyboard=True,
+    )
+
+
+def partner_start_keyboard() -> ReplyKeyboardMarkup:
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text=BTN_PARTNER_ALREADY)],
+            [KeyboardButton(text=BTN_PARTNER_APPLY)],
+            [KeyboardButton(text=BTN_PARTNER_CONFIRM_SITE)],
+        ],
+        resize_keyboard=True,
+        one_time_keyboard=True,
+    )
+
+
+def partner_apply_keyboard() -> ReplyKeyboardMarkup:
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text=BTN_PARTNER_PICK_MAP)],
+            [KeyboardButton(text=BTN_PARTNER_NO_PLACE)],
+            [KeyboardButton(text=BTN_CANCEL)],
+        ],
+        resize_keyboard=True,
+        one_time_keyboard=True,
+    )
+
+
+def partner_confirm_booking_keyboard() -> ReplyKeyboardMarkup:
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text=BTN_PARTNER_CONFIRM_BOOKING)],
+            [KeyboardButton(text=BTN_CANCEL)],
+        ],
+        resize_keyboard=True,
     )
 
 
