@@ -238,6 +238,7 @@ class Database:
                     file_filename TEXT,
                     file_mime TEXT,
                     cached_file_id TEXT,
+                    body_text TEXT,
                     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
                 );
 
@@ -376,6 +377,7 @@ class Database:
             await conn.execute("ALTER TABLE content_links ADD COLUMN IF NOT EXISTS file_filename TEXT")
             await conn.execute("ALTER TABLE content_links ADD COLUMN IF NOT EXISTS file_mime TEXT")
             await conn.execute("ALTER TABLE content_links ADD COLUMN IF NOT EXISTS cached_file_id TEXT")
+            await conn.execute("ALTER TABLE content_links ADD COLUMN IF NOT EXISTS body_text TEXT")
 
             await conn.execute("ALTER TABLE applications ADD COLUMN IF NOT EXISTS telegram_id BIGINT")
             await conn.execute("ALTER TABLE applications ADD COLUMN IF NOT EXISTS role TEXT")
@@ -1209,32 +1211,42 @@ class Database:
         file_bytes: bytes | None = None,
         file_filename: str | None = None,
         file_mime: str | None = None,
+        body_text: str | None = None,
     ) -> int:
         section_value = section.strip()
         if not section_value:
             raise ValueError("Invalid section")
-        # Если есть файл — он имеет приоритет над URL
+        # Приоритет: файл > текст > URL
         url_value = url.strip()
+        body_value = (body_text or "").strip() or None
         async with self.pool.acquire() as conn:
+            placeholder_url = ""
+            if file_bytes:
+                placeholder_url = ""  # обновим после получения id
+            elif body_value:
+                placeholder_url = ""
+            else:
+                placeholder_url = url_value
             row = await conn.fetchrow(
                 """
                 INSERT INTO content_links(
                     section, category, subcategory, title, url, position, is_active,
-                    file_bytes, file_filename, file_mime
+                    file_bytes, file_filename, file_mime, body_text
                 )
-                VALUES($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+                VALUES($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
                 RETURNING id
                 """,
                 section_value,
                 (category or "").strip() or None,
                 (subcategory or "").strip() or None,
                 title.strip(),
-                "" if file_bytes else url_value,
+                placeholder_url,
                 position,
                 is_active,
                 file_bytes,
                 (file_filename or "").strip() or None,
                 (file_mime or "").strip() or None,
+                body_value,
             )
             link_id = int(row["id"])
             if file_bytes:
@@ -1243,7 +1255,38 @@ class Database:
                     f"db_file:{link_id}",
                     link_id,
                 )
+            elif body_value:
+                await conn.execute(
+                    "UPDATE content_links SET url = $1 WHERE id = $2",
+                    f"db_text:{link_id}",
+                    link_id,
+                )
         return link_id
+
+    async def replace_content_link_body_text(self, link_id: int, body_text: str) -> None:
+        body = (body_text or "").strip()
+        async with self.pool.acquire() as conn:
+            if body:
+                await conn.execute(
+                    """
+                    UPDATE content_links
+                    SET body_text = $1,
+                        file_bytes = NULL,
+                        file_filename = NULL,
+                        file_mime = NULL,
+                        cached_file_id = NULL,
+                        url = $2
+                    WHERE id = $3
+                    """,
+                    body,
+                    f"db_text:{link_id}",
+                    link_id,
+                )
+            else:
+                await conn.execute(
+                    "UPDATE content_links SET body_text = NULL WHERE id = $1",
+                    link_id,
+                )
 
     async def get_content_link(self, link_id: int) -> asyncpg.Record | None:
         async with self.pool.acquire() as conn:

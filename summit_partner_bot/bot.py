@@ -430,6 +430,28 @@ async def _msg_text(db: Database, key: str, **kwargs: object) -> str:
 
 
 async def _send_link_or_file(message: Message, title: str, value: str, db: Database | None = None) -> None:
+    if value.startswith("db_text:") and db is not None:
+        raw_id = value.split(":", maxsplit=1)[1].strip()
+        try:
+            link_id = int(raw_id)
+        except ValueError:
+            link_id = 0
+        if link_id:
+            row = await db.get_content_link(link_id)
+            if row is not None:
+                body = str(row["body_text"] or "").strip()
+                if body:
+                    chunks = [chunk.strip() for chunk in body.split("\n---\n")]
+                    chunks = [c for c in chunks if c]
+                    for i, chunk in enumerate(chunks):
+                        if i == 0:
+                            await message.answer(f"📝 <b>{title}</b>\n\n{chunk}", parse_mode="HTML")
+                        else:
+                            await message.answer(chunk)
+                    return
+        await message.answer(f"⚠️ Текст «{title}» недоступен.")
+        return
+
     if value.startswith("db_file:") and db is not None:
         raw_id = value.split(":", maxsplit=1)[1].strip()
         try:
@@ -2770,13 +2792,6 @@ async def create_dispatcher(
             return
 
         if text == BTN_REFERRAL:
-            if not is_approved:
-                await message.answer(
-                    "🔐 Реферальная ссылка станет доступна после подтверждения доступа в одном из приватных разделов.",
-                    reply_markup=public_menu_keyboard(),
-                )
-                return
-
             me = await message.bot.get_me()
             seed = message.from_user.username or message.from_user.first_name or str(message.from_user.id)
             code = await db.get_or_create_referral_code(message.from_user.id, seed)
@@ -2785,13 +2800,16 @@ async def create_dispatcher(
             content = await content_loader.load()
             prize = str(content.get("referral_prize_text", "Пригласите коллег и выиграйте iPhone"))
 
+            intro = await _msg("msg_referral_intro")
+
+            await message.answer(intro)
             await message.answer(
                 f"🎁 {prize}\n\n"
-                f"Ваша ссылка:\n{link}\n\n"
+                f"Ваша персональная ссылка:\n{link}\n\n"
                 f"Переходов: {stats['clicks']}\n"
                 f"Заявок: {stats['pending']}\n"
                 f"Подтверждено: {stats['approved']}",
-                reply_markup=private_keyboard(str(user_row["role"])) if profile_role else public_menu_keyboard(),
+                reply_markup=private_keyboard(str(user_row["role"])) if (profile_role and user_row) else public_menu_keyboard(),
             )
             return
 

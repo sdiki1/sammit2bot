@@ -718,6 +718,7 @@ def create_app() -> FastAPI:
         section: str = Form(...),
         title: str = Form(...),
         url: str = Form(""),
+        body_text: str = Form(""),
         position: int = Form(100),
         is_active: str | None = Form(default=None),
         attachment: UploadFile | None = File(default=None),
@@ -733,8 +734,9 @@ def create_app() -> FastAPI:
             file_bytes = await attachment.read()
             file_filename = (attachment.filename or "file").strip()
             file_mime = (attachment.content_type or "").strip() or None
-        if not (url or "").strip() and not file_bytes:
-            _set_flash(request, "Укажите ссылку или прикрепите файл.")
+        body_value = (body_text or "").strip()
+        if not (url or "").strip() and not file_bytes and not body_value:
+            _set_flash(request, "Укажите ссылку, прикрепите файл или введите текст ответа.")
             return _redirect(_dashboard_url(_sanitize_tab(tab)))
         try:
             await db.add_content_link(
@@ -748,8 +750,9 @@ def create_app() -> FastAPI:
                 file_bytes=file_bytes,
                 file_filename=file_filename,
                 file_mime=file_mime,
+                body_text=body_value or None,
             )
-            _set_flash(request, "Ссылка добавлена.")
+            _set_flash(request, "Кнопка добавлена.")
         except ValueError:
             _set_flash(request, "Некорректная секция ссылки.")
         return _redirect(_dashboard_url(_sanitize_tab(tab)))
@@ -761,10 +764,12 @@ def create_app() -> FastAPI:
         section: str = Form(...),
         title: str = Form(...),
         url: str = Form(""),
+        body_text: str = Form(""),
         position: int = Form(100),
         is_active: str | None = Form(default=None),
         attachment: UploadFile | None = File(default=None),
         clear_file: str | None = Form(default=None),
+        clear_text: str | None = Form(default=None),
         tab: str = Form(TAB_PUBLIC),
     ) -> RedirectResponse:
         maybe_redirect = _require_auth(request)
@@ -773,10 +778,19 @@ def create_app() -> FastAPI:
 
         existing = await db.get_content_link(link_id)
         had_file = existing is not None and (existing["file_bytes"] is not None or (existing["cached_file_id"] or ""))
+        had_text = existing is not None and bool(existing["body_text"])
         has_new_attachment = attachment is not None and (attachment.filename or "").strip()
+        body_value = (body_text or "").strip()
+        wants_text = bool(body_value) and not clear_text
 
-        # Если файл уже привязан и новый не загружают, не сбрасываем — оставим существующий db_file:N
-        if had_file and not has_new_attachment and not clear_file:
+        # Определяем url_to_save c учётом приоритетов
+        if has_new_attachment:
+            url_to_save = (url or "").strip()  # будет переопределён в replace_content_link_file
+        elif wants_text:
+            url_to_save = (url or "").strip()  # будет переопределён в replace_content_link_body_text
+        elif had_file and not clear_file:
+            url_to_save = (existing["url"] or "").strip()
+        elif had_text and not clear_text:
             url_to_save = (existing["url"] or "").strip()
         else:
             url_to_save = (url or "").strip()
@@ -792,6 +806,7 @@ def create_app() -> FastAPI:
             is_active=bool(is_active),
         )
 
+        flash_msg = "Кнопка обновлена."
         if has_new_attachment:
             data = await attachment.read()
             await db.replace_content_link_file(
@@ -800,12 +815,32 @@ def create_app() -> FastAPI:
                 file_filename=(attachment.filename or "file").strip(),
                 file_mime=(attachment.content_type or "").strip() or None,
             )
-            _set_flash(request, "Ссылка обновлена, файл прикреплён.")
+            # При загрузке файла сбрасываем текст
+            await db.replace_content_link_body_text(link_id=link_id, body_text="")
+            flash_msg = "Кнопка обновлена, файл прикреплён."
+        elif wants_text:
+            await db.replace_content_link_body_text(link_id=link_id, body_text=body_value)
+            # При сохранении текста сбрасываем файл
+            await db.clear_content_link_file(link_id=link_id, new_url=f"db_text:{link_id}")
+            flash_msg = "Кнопка обновлена, текст сохранён."
         elif clear_file:
             await db.clear_content_link_file(link_id=link_id, new_url=(url or "").strip())
-            _set_flash(request, "Файл удалён, оставлена ссылка.")
-        else:
-            _set_flash(request, "Ссылка обновлена.")
+            flash_msg = "Файл удалён."
+        elif clear_text:
+            await db.replace_content_link_body_text(link_id=link_id, body_text="")
+            # Восстанавливаем url из формы
+            await db.update_content_link(
+                link_id=link_id,
+                section=section,
+                category="",
+                subcategory="",
+                title=title,
+                url=(url or "").strip(),
+                position=position,
+                is_active=bool(is_active),
+            )
+            flash_msg = "Текст удалён."
+        _set_flash(request, flash_msg)
         return _redirect(_dashboard_url(_sanitize_tab(tab)))
 
     @app.post("/links/delete")
